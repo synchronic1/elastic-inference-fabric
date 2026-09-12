@@ -13,6 +13,10 @@ Dendrite connects outbound over an authenticated WebSocket; no inbound tunnel
 to the node is needed. The [architecture diagram](../diagrams/ganglion-architecture.svg)
 shows the request path, the trust boundary, and the per-node execution chain
 (editable source: [`ganglion-architecture.mmd`](../diagrams/ganglion-architecture.mmd)).
+The [request-flow diagram](../diagrams/ganglion-flow.svg) shows that same path in
+order, including the heartbeat that keeps a node eligible and the read that
+collects the result (editable source:
+[`ganglion-flow.mmd`](../diagrams/ganglion-flow.mmd)).
 
 Inference stays on the node. **Prompts and results transit Cloudflare.** This is
 a cloud-mediated prototype, not an entirely private-network control plane.

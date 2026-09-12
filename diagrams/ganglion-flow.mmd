@@ -1,0 +1,24 @@
+sequenceDiagram
+  autonumber
+  participant A as Agent or harness<br/>MCP client or REST
+  participant W as Cloudflare fabric<br/>Worker, auth and placement
+  participant N as Dendrite node<br/>private, outbound only
+
+  Note over N,W: The node dials out. There is no inbound port to it.
+  N->>W: GET /v1/nodes/connect, Bearer node-role FAT
+  N->>W: {type: heartbeat, snapshot}, first message then repeated
+  Note right of W: hardware, model residency, runtime state,<br/>measured tok/s, prefix-cache hints.<br/>Heartbeats older than 30s are ineligible.
+
+  A->>W: POST /v1/tasks, Bearer agent FAT
+  W->>W: authorize the role, then place the job
+  Note right of W: connected and heartbeat under 30s,<br/>capability and model available, runtime idle.<br/>The per-runtime reservation is durable.
+  W-->>A: 202 Accepted and a job id. Execution is asynchronous.
+  W->>N: {type: execute, job_id, request}
+  Note over N: Inference runs here and nowhere else.<br/>One execution slot per runtime, against a GGUF<br/>model resident or on disk. No cloud fallback,<br/>no automatic retry.
+  N->>W: {type: result, job_id, result} or {type: result, job_id, error}
+
+  A->>W: GET /v1/tasks/{id}
+  W-->>A: placement, state, and the result or error
+  Note over A,W: Results return through the fabric. They are not streamed.
+
+  Note over A,N: Prompts and results transit Cloudflare, so this is<br/>cloud-mediated, not a private-network control plane.<br/>Jobs expire after 180s, and a disconnect fails in-flight work.

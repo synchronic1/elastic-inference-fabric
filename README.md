@@ -21,6 +21,24 @@ The editable source is [`diagrams/ganglion-architecture.mmd`](diagrams/ganglion-
 carries an opaque white card background so it stays legible under GitHub's dark
 theme, so re-rendering the `.mmd` needs that background rect re-added.
 
+## Request flow
+
+![Request flow diagram: a Dendrite node dials out and authenticates with a node-role token, then reports a heartbeat carrying its hardware, model residency and measured tok/s; an agent posts a task, the fabric authorizes it and places it against nodes whose heartbeat is under 30 seconds old, dispatches it as an execute frame over that same outbound socket, and the node returns a result frame; the agent then reads the outcome back with GET /v1/tasks/{id}, because results are never streamed.](diagrams/ganglion-flow.svg)
+
+The architecture diagram above shows what the pieces are; this one shows the
+order they act in. A node keeps itself eligible by reporting: only connected
+nodes with a heartbeat inside the last 30 seconds can be placed on. Work is
+dispatched as an `execute` frame down the socket that node already opened, so
+the node never accepts an inbound connection. The result returns through the
+fabric rather than streaming, and the agent reads it with `GET /v1/tasks/{id}`.
+Jobs expire after 180 seconds and a disconnect fails in-flight work; there is no
+automatic retry.
+
+The editable source is [`diagrams/ganglion-flow.mmd`](diagrams/ganglion-flow.mmd),
+and its SVG uses the same opaque white card background as the diagram above.
+This one is a mermaid **sequence** diagram, so it has no `.excalidraw` sibling —
+the upstream converter only handles flowcharts.
+
 ## Fabric dashboard and five-model roster
 
 Live: [Ganglion Fabric](https://elasticinferencefabric.airanger.dev).
