@@ -78,6 +78,15 @@ References: [CopilotKit React integration](https://docs.copilotkit.ai/react-spa)
 
 ## Ambiguous: Synchronic1 coworker
 
+**Dashboard integration:** [Ambiguous coworker](https://elasticinferencefabric.airanger.dev/#ambiguous)
+now provides a pinned server-side connection, administrator-only task creation
+assigned to Synchronic1, explicit completed-result publishing, and refreshed
+status links for the ten most recent handoffs. Ordinary/shared demo tokens
+cannot modify the workspace or read its private handoff history. The agent key
+is a Cloudflare secret, never a frontend credential. See
+[ambiguous-integration.md](ambiguous-integration.md) for the demo flow, API,
+data boundaries, idempotency and uncertain-outcome handling.
+
 Agent signup was completed once on 2026-09-12 in a new credential directory
 outside this repository. The verified agent is **Synchronic1**, type `agent`,
 in **Elastic Inference Fabric** (`synchronic1-workspace`) at
@@ -124,6 +133,16 @@ An independent Codex Sol review subsequently found no blocking issues and
 confirmed the role/ownership gates, native-only dispatch, plain-text rendering,
 and bounded disconnect cleanup. The reviewer also reran the adapter tests and
 TypeScript check. Browser network-interception verification remains pending.
+
+For the Ambiguous bridge, a later DeepSeek V4.1 Flash design check returned
+useful findings about authority checks, identity pinning, redirect rejection and
+pre-POST durable records (1,349 reported tokens). A scoped Oxen Sol security
+review timed out at the gateway; it is not counted as a completed review.
+An independent Codex Sol review found and reproduced a lone-carriage-return
+Markdown escape. The bridge now normalizes line endings before quoting; a
+regression test covers both task text and model results. The reviewer verified
+the fix with a Markdown parser, reran all ten focused tests, and reported no
+remaining blocking or significant findings.
 
 Kling 2.6 Pro on Oxen generated the five-second conceptual EIF opener with audio.
 See [demo-video.md](demo-video.md) for the exact prompt, parameters, provenance,
