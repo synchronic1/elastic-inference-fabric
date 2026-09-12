@@ -13,6 +13,13 @@ The authenticated dashboard includes an **Ask the fabric** console built with
 opened. An existing agent/admin Fabric session is required. Viewer and node
 credentials cannot run the assistant.
 
+Deployed at [elasticinferencefabric.airanger.dev](https://elasticinferencefabric.airanger.dev)
+on 2026-09-12. A live authenticated API check completed a real Dendrite task on
+the Mac's `qwen3-1.7b` model and returned the requested `EIF LOCAL OK` phrase
+(with the model's empty think wrapper). Both demo nodes were online after
+deployment. The final deployed runtime metadata correctly disables suggestions,
+client tools and interrupts for this completion-only integration.
+
 Request path:
 
 ```text
