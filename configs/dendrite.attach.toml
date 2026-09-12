@@ -1,0 +1,16 @@
+[node]
+id = "attached-node"
+port = 8091
+
+[[runtimes]]
+id = "existing"
+kind = "llama_cpp"
+mode = "attach"
+base_url = "http://127.0.0.1:8080"
+
+[[models]]
+id = "existing-model"
+runtime = "existing"
+# Must equal the actual id returned by the native server's GET /v1/models.
+upstream_model = "my-model"
+capabilities = ["summarize"]

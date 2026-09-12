@@ -1,0 +1,30 @@
+# Edit binary/model paths for each physical node. Paths are relative to this file.
+[node]
+id = "dendrite-local"
+host = "127.0.0.1"
+port = 8090
+model_dirs = ["../models"]
+state_dir = "../.dendrite"
+# For LAN binding, set host = "0.0.0.0" and DENDRITE_API_TOKEN in the environment.
+# Future Ganglion integration:
+# control_plane_url = "http://CONTROL_PLANE:8080"
+# advertise_url = "http://THIS_NODE:8090"
+
+[[runtimes]]
+id = "cpu"
+kind = "ik_llama"
+executable = "llama-server"
+port = 8081
+threads = 4
+context_size = 4096
+gpu_layers = 0
+
+[[models]]
+id = "small-general"
+runtime = "cpu"
+path = "../models/small-general.gguf"
+capabilities = ["classify", "summarize", "extract"]
+
+# Add more models with runtime = "cpu" to exercise on-demand switching.
+# Add another [[runtimes]] on a different port for independent execution lanes.
+

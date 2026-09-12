@@ -1,0 +1,213 @@
+#!/usr/bin/env python3
+"""Small, dependency-free CLI for the Oxen.ai Inference API.
+
+The API key is read from macOS Keychain or OXEN_API_KEY. This program never
+writes a key, logs an Authorization header, or loads credentials from the repo.
+"""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+
+BASE_URL = "https://hub.oxen.ai/api/ai"
+DEFAULT_TIMEOUT_SECONDS = 60
+
+
+class OxenError(RuntimeError):
+    """A request could not be prepared or completed."""
+
+
+def parse_json_object(value: Optional[str], flag: str) -> Dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        result = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise OxenError("%s must be valid JSON: %s" % (flag, exc.msg)) from exc
+    if not isinstance(result, dict):
+        raise OxenError("%s must be a JSON object." % flag)
+    return result
+
+
+def require_api_key() -> str:
+    key = os.environ.get("OXEN_API_KEY")
+    if key:
+        return key
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", "oxen.ai/hackathon", "-w"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except FileNotFoundError:
+        result = None
+    if result and result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    raise OxenError(
+        "No Oxen credential is available. Store the API key in macOS Keychain as "
+        "service 'oxen.ai/hackathon', or set OXEN_API_KEY in the environment that launches Codex."
+    )
+
+
+def make_url(path: str, query: Optional[Dict[str, str]] = None) -> str:
+    url = BASE_URL + path
+    if query:
+        compact_query = {key: value for key, value in query.items() if value is not None}
+        if compact_query:
+            url += "?" + urlencode(compact_query)
+    return url
+
+
+def api_request(
+    method: str,
+    path: str,
+    body: Optional[Dict[str, Any]] = None,
+    query: Optional[Dict[str, str]] = None,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    url = make_url(path, query)
+    if dry_run:
+        return {"dry_run": True, "method": method, "url": url, "body": body}
+
+    encoded_body = json.dumps(body).encode("utf-8") if body is not None else None
+    request = Request(
+        url,
+        data=encoded_body,
+        method=method,
+        headers={
+            "Authorization": "Bearer " + require_api_key(),
+            "Accept": "application/json",
+            **({"Content-Type": "application/json"} if encoded_body is not None else {}),
+        },
+    )
+    try:
+        with urlopen(request, timeout=DEFAULT_TIMEOUT_SECONDS) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="replace")
+        raise OxenError("Oxen API returned HTTP %s: %s" % (exc.code, payload)) from exc
+    except URLError as exc:
+        raise OxenError("Could not reach Oxen API: %s" % exc.reason) from exc
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true", help="Print the request without contacting Oxen.")
+    parser.add_argument("--raw", action="store_true", help="Print the complete API response as JSON.")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    models = commands.add_parser("models", help="List models, or search models by name.")
+    models.add_argument("--search", help="Optional model-name search term.")
+
+    schema = commands.add_parser("schema", help="Show a model's parameter schema and pricing fields.")
+    schema.add_argument("model")
+
+    chat = commands.add_parser("chat", help="Run an OpenAI-compatible chat completion.")
+    chat.add_argument("--model", required=True)
+    prompt_source = chat.add_mutually_exclusive_group(required=True)
+    prompt_source.add_argument("--prompt")
+    prompt_source.add_argument("--prompt-file", help="Read a bounded task packet from a file, or - for stdin.")
+    chat.add_argument("--system")
+    chat.add_argument("--max-tokens", type=int)
+    chat.add_argument("--temperature", type=float)
+    chat.add_argument("--json-object", action="store_true", help="Request JSON-object output when the selected model supports it.")
+    chat.add_argument("--extra", help="Additional OpenAI-compatible request fields as a JSON object.")
+
+    image = commands.add_parser("image", help="Generate an image synchronously.")
+    image.add_argument("--model", required=True)
+    image.add_argument("--prompt", required=True)
+    image.add_argument("--aspect-ratio")
+    image.add_argument("--seed", type=int)
+    image.add_argument("--extra", help="Additional model-specific fields as a JSON object.")
+
+    queue = commands.add_parser("queue", help="Queue an image or video generation job.")
+    queue.add_argument("--model", required=True)
+    queue.add_argument("--prompt", required=True)
+    queue.add_argument("--count", type=int, default=1, choices=range(1, 5))
+    queue.add_argument("--extra", help="Additional model-specific fields as a JSON object (e.g. duration).")
+
+    status = commands.add_parser("status", help="Get one queued image/video generation's status.")
+    status.add_argument("generation_id")
+    return parser
+
+
+def prepare_request(args: argparse.Namespace) -> Tuple[str, str, Optional[Dict[str, Any]], Optional[Dict[str, str]]]:
+    if args.command == "models":
+        if args.search:
+            return "GET", "/models/search", None, {"search": args.search}
+        return "GET", "/models", None, None
+    if args.command == "schema":
+        return "GET", "/models/" + args.model, None, None
+    if args.command == "status":
+        return "GET", "/queue/" + args.generation_id, None, None
+
+    body = parse_json_object(getattr(args, "extra", None), "--extra")
+    if args.command == "chat":
+        prompt = args.prompt
+        if args.prompt_file:
+            try:
+                prompt = sys.stdin.read() if args.prompt_file == "-" else Path(args.prompt_file).read_text()
+            except OSError as exc:
+                raise OxenError("Unable to read --prompt-file") from exc
+        if not prompt or len(prompt) > 100000:
+            raise OxenError("Chat prompt must contain 1 to 100000 characters.")
+        messages = [{"role": "user", "content": prompt}]
+        if args.system:
+            messages.insert(0, {"role": "system", "content": args.system})
+        body.update({"model": args.model, "messages": messages})
+        if args.max_tokens is not None:
+            body["max_tokens"] = args.max_tokens
+        if args.temperature is not None:
+            body["temperature"] = args.temperature
+        if args.json_object:
+            body["response_format"] = {"type": "json_object"}
+        return "POST", "/chat/completions", body, None
+    if args.command == "image":
+        body.update({"model": args.model, "prompt": args.prompt})
+        if args.aspect_ratio:
+            body["aspect_ratio"] = args.aspect_ratio
+        if args.seed is not None:
+            body["seed"] = args.seed
+        return "POST", "/images/generate", body, None
+    if args.command == "queue":
+        body.update({"model": args.model, "prompt": args.prompt, "num_generations": args.count})
+        return "POST", "/queue", body, None
+    raise OxenError("Unsupported command: %s" % args.command)
+
+
+def print_response(response: Dict[str, Any], args: argparse.Namespace) -> None:
+    if args.command == "chat" and not args.raw and not args.dry_run:
+        try:
+            content = response["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError):
+            content = None
+        if content is not None:
+            print(content)
+            return
+    print(json.dumps(response, indent=2, ensure_ascii=False))
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    try:
+        method, path, body, query = prepare_request(args)
+        response = api_request(method, path, body, query, args.dry_run)
+        print_response(response, args)
+        return 0
+    except OxenError as exc:
+        print("oxen: %s" % exc, file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,21 @@
+# Simulation only: tests the node contract, not model intelligence.
+[node]
+id = "demo-mac"
+host = "127.0.0.1"
+port = 8090
+state_dir = "../.dendrite"
+
+[[runtimes]]
+id = "demo"
+kind = "mock"
+
+[[models]]
+id = "demo-router"
+runtime = "demo"
+capabilities = ["classify", "extract"]
+
+[[models]]
+id = "demo-summary"
+runtime = "demo"
+capabilities = ["summarize"]
+

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ganglion-dendrite"
+version = "0.1.0"
+description = "Dendrite node runtime for the Ganglion private inference fabric"
+requires-python = ">=3.11"
+dependencies = ["fastapi>=0.115,<1", "httpx>=0.28,<1", "psutil>=6,<8", "uvicorn>=0.34,<1"]
+
+[project.scripts]
+dendrite = "dendrite.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8,<9", "pytest-asyncio>=0.25,<2", "ruff>=0.11,<1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["dendrite"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
