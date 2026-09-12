@@ -13,7 +13,7 @@ parser.add_argument("--model", required=True)
 parser.add_argument("--alias", required=True)
 parser.add_argument("--port", type=int, required=True)
 args, _ = parser.parse_known_args()
-mode = Path(args.model).read_text()
+mode = Path(args.model).read_text().removeprefix("GGUF:")
 if mode == "crash":
     raise SystemExit(9)
 if mode == "slow-start":
@@ -62,10 +62,11 @@ class Handler(BaseHTTPRequestHandler):
         Handler.previous = request["prompt"]
         self.reply(
             {
-                "content": f"fixture:{args.alias}:{request['prompt']}",
+                "content": f"fixture:{args.alias.split('@')[0]}:{request['prompt']}",
                 "tokens_evaluated": len(request["prompt"]),
                 "tokens_predicted": 2,
                 "tokens_cached": cached,
+                "timings": {} if mode == "legacy-cache" else {"cache_n": cached},
                 "truncated": mode == "truncated",
             }
         )

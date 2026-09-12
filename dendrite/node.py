@@ -29,16 +29,18 @@ class Node:
 
     async def start(self):
         # Attachment is observational. Configured managed models stay cold until requested.
-        for runtime in self.runtimes.values():
-            if runtime.config.mode == "attach":
-                for model in self.config.models:
-                    if model.runtime == runtime.config.id:
-                        try:
-                            await runtime.ensure_loaded(model)
-                            break
-                        except RuntimeFailure as exc:
-                            runtime.state = "unavailable"
-                            runtime.last_error = exc.detail
+        await self.refresh_attached()
+
+    async def refresh_attached(self):
+        await asyncio.gather(
+            *(
+                runtime.observe_attached(
+                    [m for m in self.config.models if m.runtime == runtime.config.id]
+                )
+                for runtime in self.runtimes.values()
+                if runtime.config.mode == "attach"
+            )
+        )
 
     def model_available(self, model: ModelConfig) -> bool:
         runtime = self.runtimes[model.runtime]
@@ -109,6 +111,7 @@ class Node:
         )
 
     async def execute(self, request: ExecuteRequest) -> ExecuteResponse:
+        await self.refresh_attached()
         model = self.select(request)
         result = await self.runtimes[model.runtime].execute(model, request)
         return ExecuteResponse(

@@ -28,6 +28,7 @@ class Runtime(ABC):
         self.instance = str(uuid.uuid4())
         self.cache = PrefixCache(node.cache_ttl_seconds)
         self.last_error: str | None = None
+        self.closing = False
 
     @property
     def simulated(self) -> bool:
@@ -47,6 +48,8 @@ class Runtime(ABC):
 
     @asynccontextmanager
     async def lane(self):
+        if self.closing:
+            raise RuntimeFailure(f"Runtime {self.config.id} is shutting down")
         # No await between the check and uncontended acquire: no hidden request queue.
         if self.lock.locked():
             raise RuntimeFailure(f"Runtime {self.config.id} is busy", 429)
@@ -58,6 +61,7 @@ class Runtime(ABC):
 
     async def execute(self, model: ModelConfig, request: ExecuteRequest) -> dict:
         async with self.lane():
+            self.validate_request(request)
             started = time.monotonic()
             try:
                 async with asyncio.timeout(self.node.request_timeout_seconds):
@@ -133,6 +137,9 @@ class Runtime(ABC):
     @abstractmethod
     async def ensure_loaded(self, model: ModelConfig): ...
 
+    def validate_request(self, request: ExecuteRequest):
+        """Reject invalid work before loading or disturbing a resident model."""
+
     @abstractmethod
     async def generate(self, request: ExecuteRequest) -> dict: ...
 
@@ -143,4 +150,7 @@ class Runtime(ABC):
         await self.stop()
 
     async def close(self):
-        await self.stop()
+        self.closing = True
+        # Drain the bounded active request before stopping; no late result can resurrect state.
+        async with self.lock:
+            await self.stop()

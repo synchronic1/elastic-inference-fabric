@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+"""Manage the fabric credential without printing it or writing it into the repo."""
+
+import argparse
+import json
+import os
+import secrets
+import subprocess
+import sys
+from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
+
+ROOT = Path(__file__).resolve().parent.parent
+SERVICE = "ganglion.fabric/hackathon"
+
+
+def credential(required=True):
+    token = os.environ.get("GANGLION_FABRIC_TOKEN")
+    if not token:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-s", SERVICE, "-w"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        token = result.stdout.strip() if result.returncode == 0 else None
+    if required and (not token or len(token) < 16):
+        raise ValueError(
+            "Run bin/fabric init or set GANGLION_FABRIC_TOKEN (at least 16 characters)"
+        )
+    return token
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None  # Never forward a credential through a redirect.
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("init", help="Create a random shared token in macOS Keychain if absent")
+    commands.add_parser("copy-token", help="Copy token to clipboard for the dashboard login")
+    commands.add_parser("publish-secret", help="Set Cloudflare FABRIC_TOKEN using Wrangler stdin")
+    run = commands.add_parser("run-node", help="Start Dendrite with the credential injected")
+    run.add_argument("--config", default=".dendrite/mac.toml")
+    request = commands.add_parser(
+        "request", help="Authenticated HTTP request; never prints credentials"
+    )
+    request.add_argument("origin")
+    request.add_argument("path", nargs="?", default="/v1/resources")
+    request.add_argument("--body-file", help="JSON request body path, or - for stdin (POST)")
+    args = parser.parse_args()
+    if args.command == "init":
+        if credential(required=False):
+            print("Fabric credential already available; left unchanged.")
+            return
+        token = secrets.token_urlsafe(32)
+        # security's interactive mode avoids placing the generated secret in argv.
+        result = subprocess.run(
+            ["security", "-i"],
+            input=f'add-generic-password -s "{SERVICE}" -a "fabric" -w "{token}"\n',
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode or credential(required=False) != token:
+            raise ValueError("Could not create fabric credential in macOS Keychain")
+        print("Created Fabric credential in macOS Keychain; token not displayed.")
+        return
+    token = credential()
+    if args.command == "copy-token":
+        subprocess.run(["pbcopy"], input=token, text=True, check=True)
+        print("Fabric token copied. Paste into the dashboard; clear clipboard afterward.")
+    elif args.command == "publish-secret":
+        subprocess.run(
+            [str(ROOT / "fabric/node_modules/.bin/wrangler"), "secret", "put", "FABRIC_TOKEN"],
+            cwd=ROOT / "fabric",
+            input=token,
+            text=True,
+            check=True,
+        )
+    elif args.command == "run-node":
+        env = dict(os.environ, GANGLION_FABRIC_TOKEN=token)
+        os.chdir(ROOT)
+        os.execvpe("uv", ["uv", "run", "dendrite", "serve", "--config", args.config], env)
+    else:
+        origin = urlsplit(args.origin)
+        if (
+            origin.scheme not in ("http", "https")
+            or not origin.hostname
+            or origin.username
+            or origin.password
+            or origin.path not in ("", "/")
+            or origin.query
+            or origin.fragment
+            or (
+                origin.scheme == "http" and origin.hostname not in ("127.0.0.1", "localhost", "::1")
+            )
+        ):
+            raise ValueError("Origin must be HTTPS, or HTTP on loopback")
+        if not args.path.startswith("/") or args.path.startswith("//") or "#" in args.path:
+            raise ValueError("Use an absolute API path, not a URL")
+        body = None
+        if args.body_file:
+            raw = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text()
+            body = json.dumps(json.loads(raw)).encode()
+        req = Request(
+            args.origin.rstrip("/") + args.path,
+            data=body,
+            headers={
+                "Authorization": "Bearer " + token,
+                "User-Agent": "Ganglion-Fabric/0.1",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with build_opener(NoRedirect).open(req, timeout=30) as response:
+                print(response.read().decode())
+        except HTTPError as exc:
+            print(f"Fabric returned HTTP {exc.code}: {exc.read().decode()}", file=sys.stderr)
+            raise SystemExit(1) from None
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+        print(f"Fabric operation failed: {type(exc).__name__}", file=sys.stderr)
+        raise SystemExit(1) from None

@@ -1,0 +1,8 @@
+{
+  "capability": "complete",
+  "model_id": "qwen3-1.7b",
+  "prefix": "<|im_start|>system\nAnswer briefly.<|im_end|>\n<|im_start|>user\n",
+  "prompt": "What is 2+2? /no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+  "max_tokens": 24,
+  "temperature": 0
+}

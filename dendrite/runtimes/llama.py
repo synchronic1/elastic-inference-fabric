@@ -22,6 +22,10 @@ class LlamaRuntime(Runtime):
             base_url=self.url, trust_env=False, timeout=node.request_timeout_seconds
         )
         self.quarantined = False
+        self.last_observed_at: float | None = None
+
+    def native_alias(self, model: ModelConfig) -> str:
+        return model.id + "@" + self.instance
 
     def command(self, model: ModelConfig) -> list[str]:
         return [
@@ -29,7 +33,7 @@ class LlamaRuntime(Runtime):
             "--model",
             str(model.path),
             "--alias",
-            model.id,
+            self.native_alias(model),
             "--host",
             "127.0.0.1",
             "--port",
@@ -51,7 +55,9 @@ class LlamaRuntime(Runtime):
             raise RuntimeFailure("Native runtime has no ready slot")
         response = await self.client.get("/v1/models", timeout=2)
         response.raise_for_status()
-        expected = model.upstream_model if self.config.mode == "attach" else model.id
+        expected = (
+            model.upstream_model if self.config.mode == "attach" else self.native_alias(model)
+        )
         if expected not in {item.get("id") for item in response.json().get("data", [])}:
             raise RuntimeFailure(f"Native runtime is not serving expected model {model.id}")
 
@@ -72,6 +78,7 @@ class LlamaRuntime(Runtime):
             self.loaded_model = model
             self.fingerprint = "attached:" + model.upstream_model
             self.state = "ready"
+            self.last_observed_at = time.time()
             return
 
         identity = file_identity(model.path)
@@ -98,11 +105,16 @@ class LlamaRuntime(Runtime):
                 raise RuntimeFailure(f"Managed port {self.config.port} is already in use") from exc
         self.state = "loading"
         try:
+            # Native runtimes can create default log/cache files before parsing flags.
+            # Keep those artifacts out of the project root and isolated per instance.
+            work_dir = self.node.state_dir.resolve() / ("runtime-" + self.instance)
+            work_dir.mkdir(parents=True, exist_ok=True)
             self.process = await asyncio.create_subprocess_exec(
                 *self.command(model),
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.DEVNULL,
                 start_new_session=True,
+                cwd=work_dir,
             )
             async with asyncio.timeout(self.config.startup_timeout_seconds):
                 while True:
@@ -126,9 +138,11 @@ class LlamaRuntime(Runtime):
         self.fingerprint = identity["fingerprint"]
         self.state = "ready"
 
-    async def generate(self, request: ExecuteRequest) -> dict:
+    def validate_request(self, request: ExecuteRequest):
         if request.max_tokens >= self.config.context_size:
             raise RuntimeFailure("max_tokens must be smaller than runtime context_size", 422)
+
+    async def generate(self, request: ExecuteRequest) -> dict:
         try:
             response = await self.client.post(
                 "/completion",
@@ -148,7 +162,9 @@ class LlamaRuntime(Runtime):
             timings = result.get("timings") or {}
             if not isinstance(timings, dict):
                 raise ValueError("Invalid timing metadata")
-            cached = timings.get("cache_n", result.get("tokens_cached"))
+            # IK's legacy tokens_cached is post-generation slot.n_past in current source,
+            # despite older docs describing it as reuse. Do not infer a hit from it.
+            cached = timings.get("cache_n")
             if type(cached) is not int or cached < 0:
                 cached = None
             return {
@@ -158,6 +174,7 @@ class LlamaRuntime(Runtime):
                 "usage": {
                     "prompt_tokens": result.get("tokens_evaluated"),
                     "completion_tokens": result.get("tokens_predicted"),
+                    "backend_tokens_cached": result.get("tokens_cached"),
                     "timings": {
                         key: timings[key]
                         for key in ("prompt_n", "prompt_ms", "predicted_n", "predicted_ms")
@@ -196,10 +213,33 @@ class LlamaRuntime(Runtime):
         await self.stop()
 
     async def close(self):
-        await self.stop()
+        await super().close()
         await self.client.aclose()
 
+    async def observe_attached(self, models: list[ModelConfig]):
+        if self.config.mode != "attach" or self.lock.locked() or self.quarantined or self.closing:
+            return
+        async with self.lane():
+            for model in models:
+                try:
+                    await self.ensure_loaded(model)
+                    self.last_error = None
+                    return
+                except RuntimeFailure as exc:
+                    self.last_error = exc.detail
+            self.reset()
+            self.state = "unavailable"
+            self.last_observed_at = time.time()
+
     def snapshot(self) -> dict:
+        if (
+            self.config.mode == "attach"
+            and not self.lock.locked()
+            and self.last_observed_at is not None
+            and time.time() - self.last_observed_at > self.node.heartbeat_seconds
+        ):
+            self.reset()
+            self.state = "unavailable"
         if self.process and self.process.returncode is not None and not self.lock.locked():
             self.reset()
             self.state = "error"
@@ -209,4 +249,5 @@ class LlamaRuntime(Runtime):
             "process_id": self.process.pid if self.process else None,
             "binary_available": bool(shutil.which(self.config.executable)),
             "observed_at": time.time(),
+            "attachment_observed_at": self.last_observed_at,
         }

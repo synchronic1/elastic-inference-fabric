@@ -75,6 +75,26 @@ class NodeConfig(StrictModel):
     control_plane_url: str | None = None
     advertise_url: str | None = None
     heartbeat_seconds: float = Field(default=10, ge=1, le=300)
+    fabric_url: str | None = None
+    fabric_token_env: str = "GANGLION_FABRIC_TOKEN"
+
+    @model_validator(mode="after")
+    def validate_fabric_origin(self):
+        if self.fabric_url:
+            url = urlsplit(self.fabric_url)
+            local = url.hostname in ("localhost", "127.0.0.1", "::1")
+            if (
+                url.scheme not in ("http", "https")
+                or not url.hostname
+                or url.username
+                or url.password
+                or url.query
+                or url.fragment
+                or url.path not in ("", "/")
+                or (url.scheme == "http" and not local)
+            ):
+                raise ValueError("fabric_url requires an HTTPS origin (HTTP only on loopback)")
+        return self
 
 
 class Config(StrictModel):

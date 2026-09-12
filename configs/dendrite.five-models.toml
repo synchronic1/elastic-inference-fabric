@@ -1,0 +1,48 @@
+# Intended roster. Missing GGUF files are shown as unavailable, never auto-downloaded.
+# Per-model roles are operator choices; validate quality for the actual task.
+[node]
+id = "five-model-node"
+port = 8090
+model_dirs = ["../models"]
+state_dir = "../.dendrite"
+# Optional outbound cloud relay (requires GANGLION_FABRIC_TOKEN):
+# fabric_url = "https://YOUR-WORKER.workers.dev"
+
+[[runtimes]]
+id = "cpu"
+kind = "ik_llama"
+executable = "llama-server"
+port = 8081
+threads = 4
+context_size = 4096
+gpu_layers = 0
+
+[[models]]
+id = "qwen3-0.6b"
+runtime = "cpu"
+path = "../models/qwen3-0.6b.gguf"
+capabilities = ["routing", "classify"]
+
+[[models]]
+id = "qwen2.5-coder-1.5b"
+runtime = "cpu"
+path = "../models/qwen2.5-coder-1.5b.gguf"
+capabilities = ["code_analysis"]
+
+[[models]]
+id = "smollm2-1.7b"
+runtime = "cpu"
+path = "../models/smollm2-1.7b.gguf"
+capabilities = ["summarize"]
+
+[[models]]
+id = "qwen2.5-0.5b"
+runtime = "cpu"
+path = "../models/qwen2.5-0.5b.gguf"
+capabilities = ["extract"]
+
+[[models]]
+id = "qwen3-1.7b"
+runtime = "cpu"
+path = "../models/qwen3-1.7b.gguf"
+capabilities = ["reasoning", "judge", "complete"]

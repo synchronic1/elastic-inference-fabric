@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "ganglion-fabric",
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "elasticinferencefabric.airanger.dev", "custom_domain": true }
+  ],
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "account_id": "5bdd4f746ccac889f54e026435565e70",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/v1/*", "/.well-known/*", "/llms.txt", "/openapi.json", "/healthz"]
+  },
+  "durable_objects": { "bindings": [{ "name": "FABRIC", "class_name": "FabricRoom" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["FabricRoom"] }],
+  "observability": { "enabled": false }
+}

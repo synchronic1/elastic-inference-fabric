@@ -63,6 +63,12 @@ class OxenCliTests(unittest.TestCase):
                 self.assertEqual(oxen.require_api_key(), "test-key")
                 keychain.assert_not_called()
 
+    def test_prompt_file_supports_bounded_worker_packets(self):
+        args = self.parse(["chat", "--model", "gpt-5-6-terra", "--prompt-file", "-"])
+        with patch.object(oxen.sys, "stdin", io.StringIO("review this code")):
+            _, _, body, _ = oxen.prepare_request(args)
+        self.assertEqual(body["messages"][0]["content"], "review this code")
+
 
 if __name__ == "__main__":
     unittest.main()

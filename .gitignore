@@ -9,4 +9,9 @@ __pycache__/
 .dendrite/
 models/
 *.gguf
-
+llama.log
+node_modules/
+fabric/dist/
+fabric/.wrangler/
+fabric/.dev.vars
+fabric/.dev.vars.*

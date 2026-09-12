@@ -1,59 +1,107 @@
-# Oxen.ai hackathon gateway
+# Ganglion — local inference fabric
 
-`bin/oxen` is a tiny, dependency-free command-line gateway to Oxen's Inference
-API. It gives Codex and its sub-agents one consistent interface to discover
-models and make text, image, or asynchronous media requests. It is deliberately
-not an HTTP proxy: Oxen's chat endpoint is already OpenAI-compatible, so the
-direct path is the fastest and least failure-prone option.
+Dendrite turns a machine's local GGUF models into an HTTP execution node for
+Ganglion. The **node layer** implements hardware discovery,
+runtime adapters, model residency and switching, capability-based execution,
+and conservative prefix-cache metadata. The **Cloudflare fabric** adds an
+authenticated resource dashboard, outbound node connections, durable task
+placement, and machine-readable agent discovery.
 
-## One-time activation
+## Fabric dashboard and five-model roster
 
-1. Create an API key in [Oxen account settings](https://oxen.ai/account/settings).
-2. Add it in **Keychain Access** as a Generic Password with service name
-   `oxen.ai/hackathon`; use your local macOS username for the Account field.
-   This lets all same-user Codex sub-agents use the gateway without a secret in
-   the project or in a command argument. Alternatively, set `OXEN_API_KEY` in
-   the environment that launches Codex.
-3. Verify the connection and choose the exact current model rather than relying
-   on a hard-coded name:
+Live: [Ganglion Fabric](https://elasticinferencefabric.airanger.dev).
+Run `bin/fabric copy-token` to copy the dashboard login token from Keychain.
 
-   ```sh
-   bin/oxen models --search flash
-   bin/oxen schema claude-sonnet-4-6
-   ```
+The dashboard lists five intended specializations, with live **Running / Cached /
+Not provisioned** status. The public roster is visible without login; live node
+inventory and task execution require authentication.
 
-The CLI refuses to run without a Keychain or environment credential, never
-persists the key in this project, and supports `--dry-run` to inspect a request
-without sending it.
+| Model | Intended role |
+| --- | --- |
+| Qwen3 0.6B | Intent routing / classification |
+| Qwen2.5 Coder 1.5B | Code analysis |
+| SmolLM2 1.7B | Summarization |
+| Qwen2.5 0.5B | Structured extraction |
+| Qwen3 1.7B | Reasoning / judging / completion |
 
-## Agent-ready commands
+These are starting roles, not benchmark claims. Only Qwen3 1.7B is currently
+installed on this Mac. See [the portable five-model config](configs/dendrite.five-models.toml)
+and [fabric setup and API guide](docs/fabric.md).
+
+## Run on this Mac
+
+The local configuration uses the compiled IK_Llama server and the existing
+Qwen3 1.7B GGUF in the Ollama cache. It runs on CPU, with no cloud inference:
 
 ```sh
-# Fast research, extraction, critique, or planning
-bin/oxen chat --model claude-sonnet-4-6 --prompt 'Return three crisp product risks.' --max-tokens 250
-
-# Ask for machine-readable output (where the selected model supports it)
-bin/oxen chat --model claude-sonnet-4-6 --prompt 'Return a JSON object with title and tagline.' --json-object
-
-# Make a visual asset synchronously (usually 5–30 seconds)
-bin/oxen image --model black-forest-labs-flux-2-klein-4b --prompt 'A friendly autonomous delivery robot, 16:9' --aspect-ratio 16:9
-
-# Queue long-running media and poll with the returned generation ID
-bin/oxen queue --model kling-video-v2-6-pro-text-to-video --prompt 'A lantern floating above Venice at dusk' --extra '{"duration": 5}'
-bin/oxen status GENERATION_ID
+uv sync --locked
+bin/fabric run-node --config .dendrite/mac.toml
 ```
 
-For model-specific options, inspect `bin/oxen schema MODEL_ID` first and pass
-valid fields through `--extra` as a JSON object. Keep prompts and outputs free
-of secrets or data you are not authorized to send to Oxen.
+Open [the node API docs](http://127.0.0.1:8090/docs) or inspect
+[node state](http://127.0.0.1:8090/v1/node). `.dendrite/mac.toml` is machine-local,
+ignored by Git, and must be recreated on a different machine.
+The helper injects the Fabric credential from macOS Keychain. For a standalone
+node without `node.fabric_url`, run `uv run dendrite serve --config CONFIG` directly.
+
+## Run on another node
+
+Requires Python 3.11+, an IK_Llama/llama.cpp `llama-server` binary, and a local GGUF.
+Edit [configs/dendrite.local.toml](configs/dendrite.local.toml) for that machine:
+
+```sh
+uv sync --locked
+uv run dendrite inspect --config configs/dendrite.local.toml
+uv run dendrite serve --config configs/dendrite.local.toml
+```
+
+Use [the attach configuration](configs/dendrite.attach.toml) for an existing local
+server. Dendrite verifies its model ID and never owns its process lifecycle.
+For a no-model plumbing demo, use `configs/dendrite.mock.toml`; every simulated
+result is explicitly marked.
+
+## Execute a task
+
+Requests use **raw completion prompts**. `prefix` is prepended exactly to `prompt`;
+the caller is responsible for the model's chat template, if one is needed.
+This example uses the Qwen3 template for the configured Mac node:
+
+```sh
+curl -sS http://127.0.0.1:8090/v1/execute \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "capability": "complete",
+    "prefix": "<|im_start|>system\nAnswer briefly.<|im_end|>\n<|im_start|>user\n",
+    "prompt": "What is 2+2? /no_think<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "max_tokens": 24,
+    "temperature": 0
+  }'
+```
+
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /healthz` | Daemon liveness; not model readiness |
+| `GET /v1/node` | Hardware, load, models, residency, runtime state, cache candidates |
+| `POST /v1/execute` | Resolve capability locally, load/reuse a model, execute |
+| `POST /v1/models/load` | Preload/switch using `{"model_id":"..."}` |
+| `POST /v1/runtimes/{id}/unload` | Release an owned model process |
+
+Each runtime has one execution slot. Busy requests return `429` with `Retry-After`.
+Separate configured runtimes use independent slots/ports. GGUFs are not downloaded
+automatically, and capability labels are operator declarations, not benchmark results.
 
 ## Verification
 
 ```sh
-python3 -m unittest discover -s tests -v
-bin/oxen --dry-run chat --model claude-sonnet-4-6 --prompt 'ping'
+uv run pytest -q
+uv run ruff check dendrite tests
 ```
 
-Sources: [Inference overview](https://docs.oxen.ai/inference-api/overview),
-[chat quick start](https://docs.oxen.ai/inference-api/quickstart/chat), and
-[model API reference](https://docs.oxen.ai/inference-api/reference/models/overview).
+Tests cover subprocess lifecycle with a protocol fixture, concurrency,
+timeouts/crashes, immediate switching, attachment protection, authentication,
+cache invalidation, and heartbeat failure. The fixture tests are not evidence
+of real model quality. See [the build notes](docs/node-runtime.md) for real-model
+verification and remaining boundaries.
+
+The [Oxen CLI](docs/oxen-gateway.md) supplies separate, explicitly requested
+development-worker inference. Dendrite's execution path never calls Oxen.

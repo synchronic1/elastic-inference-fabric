@@ -7,7 +7,7 @@ name = "ganglion-dendrite"
 version = "0.1.0"
 description = "Dendrite node runtime for the Ganglion private inference fabric"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.115,<1", "httpx>=0.28,<1", "psutil>=6,<8", "uvicorn>=0.34,<1"]
+dependencies = ["fastapi>=0.115,<1", "httpx>=0.28,<1", "psutil>=6,<8", "uvicorn>=0.34,<1", "websockets>=15,<18"]
 
 [project.scripts]
 dendrite = "dendrite.cli:main"
@@ -28,4 +28,3 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
-

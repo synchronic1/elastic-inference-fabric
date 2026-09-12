@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from dendrite.api import create_app, publish_heartbeats
 from dendrite.cache import PrefixCache
 from dendrite.config import Config, ModelConfig, NodeConfig, RuntimeConfig, load_config
+from dendrite.hardware import file_identity
 from dendrite.node import Node
 from dendrite.runtimes.base import RuntimeFailure
 from dendrite.runtimes.llama import LlamaRuntime
@@ -44,7 +45,7 @@ def req(**overrides):
 @pytest.fixture
 def native(tmp_path):
     path = tmp_path / "test.gguf"
-    path.write_text("normal")
+    path.write_text("GGUF:normal")
     model = ModelConfig(id="native-a", runtime="cpu", path=path, capabilities=["summarize"])
     config = RuntimeConfig(
         id="cpu", kind="ik_llama", executable=FIXTURE, port=free_port(), startup_timeout_seconds=2
@@ -158,7 +159,7 @@ async def test_managed_native_inference_cache_switch_and_shutdown(native, tmp_pa
         old = await runtime.execute(model, req(prefix="prefix: "))
         assert old["cache"]["candidate_before_request"] is False
         next_path = tmp_path / "next.gguf"
-        next_path.write_text("normal")
+        next_path.write_text("GGUF:normal")
         other = model.model_copy(update={"id": "native-b", "path": next_path})
         await runtime.load(other)
         assert first_process.returncode is not None
@@ -182,7 +183,7 @@ async def test_managed_native_inference_cache_switch_and_shutdown(native, tmp_pa
 )
 async def test_native_failures_are_bounded_and_cleaned(native, mode, status):
     runtime, model = native
-    model.path.write_text(mode)
+    model.path.write_text("GGUF:" + mode)
     runtime.config.startup_timeout_seconds = 0.5
     try:
         with pytest.raises(RuntimeFailure) as error:
@@ -192,7 +193,7 @@ async def test_native_failures_are_bounded_and_cleaned(native, mode, status):
         assert runtime.loaded_model is None
         assert not runtime.lock.locked()
         assert runtime.cache.snapshot() == []
-        model.path.write_text("normal")
+        model.path.write_text("GGUF:normal")
         assert (await runtime.execute(model, req()))["content"].startswith("fixture:")
     finally:
         await runtime.close()
@@ -200,7 +201,7 @@ async def test_native_failures_are_bounded_and_cleaned(native, mode, status):
 
 async def test_generation_timeout_kills_owned_process(native):
     runtime, model = native
-    model.path.write_text("slow-infer")
+    model.path.write_text("GGUF:slow-infer")
     runtime.node.request_timeout_seconds = 0.5
     try:
         with pytest.raises(RuntimeFailure) as error:
@@ -238,7 +239,7 @@ async def test_attach_identity_and_lifecycle_do_not_touch_external_process(nativ
         wrong = model.model_copy(update={"upstream_model": "wrong"})
         with pytest.raises(RuntimeFailure, match="expected model"):
             await attached.ensure_loaded(wrong)
-        match = model.model_copy(update={"upstream_model": "native-a"})
+        match = model.model_copy(update={"upstream_model": owner.native_alias(model)})
         await attached.execute(match, req(prefix="private: "))
         assert attached.cache.snapshot() == []
         with pytest.raises(RuntimeFailure, match="another process"):
@@ -256,7 +257,7 @@ async def test_file_replacement_and_runtime_exit_invalidate_residency(native):
     try:
         await runtime.execute(model, req(prefix="P"))
         old_instance = runtime.instance
-        model.path.write_text("normal ")
+        model.path.write_text("GGUF:normal ")
         await runtime.load(model)
         assert runtime.instance != old_instance
         assert runtime.cache.snapshot() == []
@@ -270,7 +271,7 @@ async def test_file_replacement_and_runtime_exit_invalidate_residency(native):
 
 async def test_truncation_does_not_advertise_prefix(native):
     runtime, model = native
-    model.path.write_text("truncated")
+    model.path.write_text("GGUF:truncated")
     try:
         await runtime.execute(model, req(prefix="prefix"))
         assert runtime.cache.snapshot() == []
@@ -313,3 +314,85 @@ async def test_heartbeat_contract_and_failure_do_not_stop_node(monkeypatch):
         with pytest.raises(asyncio.CancelledError):
             await task
         await node.close()
+
+
+async def test_shutdown_drains_lane_and_rejects_new_work():
+    config = mock_config()
+    config.runtimes[0].mock_delay_seconds = 0.05
+    node = Node(config)
+    execution = asyncio.create_task(node.execute(req(prefix="P")))
+    await asyncio.sleep(0.01)
+    closing = asyncio.create_task(node.close())
+    await execution
+    await closing
+    runtime = node.runtimes["demo"]
+    assert runtime.state == "unloaded"
+    assert runtime.loaded_model is None
+    assert runtime.cache.snapshot() == []
+    with pytest.raises(RuntimeFailure, match="shutting down"):
+        await node.execute(req())
+
+
+async def test_refresh_invalidates_stale_attachment(native):
+    owner, model = native
+    node = None
+    try:
+        await owner.load(model)
+        attached_model = model.model_copy(
+            update={"runtime": "attached", "upstream_model": owner.native_alias(model)}
+        )
+        node = Node(
+            Config(
+                runtimes=[
+                    RuntimeConfig(id="attached", kind="ik_llama", mode="attach", base_url=owner.url)
+                ],
+                models=[attached_model],
+            )
+        )
+        await node.start()
+        assert node.snapshot()["models"][0]["resident"] is True
+        await owner.stop()
+        await node.refresh_attached()
+        state = node.snapshot()["models"][0]
+        assert state["resident"] is False
+        assert state["available"] is False
+    finally:
+        if node:
+            await node.close()
+        await owner.close()
+
+
+async def test_legacy_cache_counter_is_not_a_measured_hit(native):
+    runtime, model = native
+    model.path.write_text("GGUF:legacy-cache")
+    try:
+        await runtime.execute(model, req(prefix="P"))
+        result = await runtime.execute(model, req(prefix="P"))
+        assert result["cache"]["candidate_before_request"] is True
+        assert result["usage"]["backend_tokens_cached"] > 0
+        assert result["cache"]["reported_cached_tokens"] is None
+    finally:
+        await runtime.close()
+
+
+async def test_invalid_budget_does_not_unload_warm_model(native):
+    runtime, model = native
+    try:
+        await runtime.execute(model, req(prefix="P"))
+        pid = runtime.process.pid
+        with pytest.raises(RuntimeFailure) as error:
+            await runtime.execute(model, req(max_tokens=runtime.config.context_size))
+        assert error.value.status_code == 422
+        assert runtime.process.pid == pid
+        assert runtime.cache.snapshot()
+    finally:
+        await runtime.close()
+
+
+def test_gguf_magic_supports_extensionless_blobs(tmp_path):
+    blob = tmp_path / "sha256-model"
+    blob.write_bytes(b"GGUF\x00fixture")
+    assert file_identity(blob)["cached_on_disk"] is True
+    not_model = tmp_path / "not-a-model.gguf"
+    not_model.write_text("not a GGUF")
+    assert file_identity(not_model)["cached_on_disk"] is False

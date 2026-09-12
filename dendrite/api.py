@@ -10,6 +10,7 @@ from fastapi import Depends, FastAPI, Header
 from fastapi.responses import JSONResponse
 
 from dendrite.config import Config
+from dendrite.fabric import run_fabric_bridge
 from dendrite.node import Node
 from dendrite.runtimes.base import RuntimeFailure
 from dendrite.schemas import ExecuteRequest, ExecuteResponse, LoadRequest
@@ -22,6 +23,7 @@ async def publish_heartbeats(node: Node, token: str | None):
     async with httpx.AsyncClient(timeout=5, trust_env=False, headers=headers) as client:
         while True:
             try:
+                await node.refresh_attached()
                 # Proposed control-plane contract, documented for the next build phase.
                 response = await client.post(
                     node.config.node.control_plane_url.rstrip("/") + "/v1/nodes/heartbeat",
@@ -37,6 +39,9 @@ async def publish_heartbeats(node: Node, token: str | None):
 
 def create_app(config: Config) -> FastAPI:
     token = os.environ.get(config.node.token_env)
+    fabric_token = os.environ.get(config.node.fabric_token_env)
+    if config.node.fabric_url and not fabric_token:
+        raise ValueError(f"Set {config.node.fabric_token_env} before joining the cloud fabric")
     if config.node.host not in ("127.0.0.1", "::1", "localhost") and not token:
         raise ValueError(f"Set {config.node.token_env} before binding to a network interface")
     if config.node.control_plane_url and not config.node.advertise_url:
@@ -47,12 +52,19 @@ def create_app(config: Config) -> FastAPI:
         node = Node(config)
         app.state.node = node
         heartbeat = None
+        fabric_bridge = None
         try:
             await node.start()
             if config.node.control_plane_url:
                 heartbeat = asyncio.create_task(publish_heartbeats(node, token))
+            if config.node.fabric_url:
+                fabric_bridge = asyncio.create_task(run_fabric_bridge(node, fabric_token))
             yield
         finally:
+            if fabric_bridge:
+                fabric_bridge.cancel()
+                with suppress(asyncio.CancelledError):
+                    await fabric_bridge
             if heartbeat:
                 heartbeat.cancel()
                 with suppress(asyncio.CancelledError):
@@ -81,6 +93,7 @@ def create_app(config: Config) -> FastAPI:
 
     @app.get("/v1/node", dependencies=protected)
     async def snapshot():
+        await app.state.node.refresh_attached()
         return app.state.node.snapshot()
 
     @app.post("/v1/execute", response_model=ExecuteResponse, dependencies=protected)

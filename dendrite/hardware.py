@@ -81,7 +81,12 @@ def file_identity(path: Path | None) -> dict:
         return {"cached_on_disk": False, "fingerprint": None}
     try:
         stat = path.stat()
-        cached = path.is_file() and path.suffix.lower() == ".gguf" and stat.st_size > 0
+        if not path.is_file():
+            return {"cached_on_disk": False, "fingerprint": None}
+        # Explicit model paths may be extensionless Ollama blobs. Verify the GGUF magic,
+        # without scanning tensor data or hashing gigabytes on each heartbeat.
+        with path.open("rb") as model_file:
+            cached = model_file.read(4) == b"GGUF"
     except OSError:
         return {"cached_on_disk": False, "fingerprint": None}
     # This is a LOCAL identity/invalidator, never a portable content checksum.
