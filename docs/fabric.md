@@ -10,7 +10,9 @@ See the [DNS support packet](dns-repair.md).
 `fabric/` contains a React dashboard and a native Cloudflare Worker. A SQLite
 Durable Object holds node metadata, job status, and runtime reservations. Each
 Dendrite connects outbound over an authenticated WebSocket; no inbound tunnel
-to the node is needed.
+to the node is needed. The [architecture diagram](../diagrams/ganglion-architecture.svg)
+shows the request path, the trust boundary, and the per-node execution chain
+(editable source: [`ganglion-architecture.mmd`](../diagrams/ganglion-architecture.mmd)).
 
 Inference stays on the node. **Prompts and results transit Cloudflare.** This is
 a cloud-mediated prototype, not an entirely private-network control plane.

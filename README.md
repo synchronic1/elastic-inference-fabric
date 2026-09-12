@@ -7,6 +7,20 @@ and conservative prefix-cache metadata. The **Cloudflare fabric** adds an
 authenticated resource dashboard, outbound node connections, durable task
 placement, and machine-readable agent discovery.
 
+## Architecture
+
+![Architecture diagram: an agent or harness sends an authenticated request to the Cloudflare control plane, which authorizes it with a Fabric access token and places it on an outbound-connected Dendrite node; the node executes locally against its runtime and GGUF models and returns results and heartbeats.](diagrams/ganglion-architecture.svg)
+
+Agents reach the authenticated control plane, which places each job on an
+outbound-connected Dendrite node. Inference stays on that node; there is no cloud
+inference fallback. Nodes report hardware, model residency, and measured
+throughput back over the same connection. Each runtime holds one execution slot.
+
+The editable source is [`diagrams/ganglion-architecture.mmd`](diagrams/ganglion-architecture.mmd)
+(mermaid; its `.excalidraw` sibling opens at excalidraw.com). The committed SVG
+carries an opaque white card background so it stays legible under GitHub's dark
+theme, so re-rendering the `.mmd` needs that background rect re-added.
+
 ## Fabric dashboard and five-model roster
 
 Live: [Ganglion Fabric](https://elasticinferencefabric.airanger.dev).

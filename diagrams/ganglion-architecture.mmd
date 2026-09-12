@@ -1,0 +1,26 @@
+graph LR
+  AG["Agent or harness<br/>MCP client or REST API"]
+
+  subgraph CP["Cloudflare control plane - authenticated relay"]
+    W["Worker<br/>/mcp, /v1/tasks, /v1/resources"]
+    T["Fabric access tokens<br/>admin, agent, node roles"]
+    P["Placement and job ownership"]
+    DB[("Durable Object SQLite<br/>nodes, jobs, reservations")]
+  end
+
+  subgraph ND["Dendrite node - private, local inference"]
+    N["Node daemon"]
+    HW["Hardware<br/>CPU threads, memory, GPU"]
+    RT["Runtime slot<br/>one execution at a time"]
+    MD["GGUF models<br/>resident or on disk"]
+  end
+
+  AG -->|"authenticated request"| W
+  T -.->|"authorizes"| W
+  W --> P
+  P --> DB
+  P -->|"dispatch over outbound WebSocket<br/>no inbound node port"| N
+  HW --- N
+  N --> RT
+  RT --> MD
+  MD -.->|"results and heartbeat<br/>hardware, models, measured tok/s"| W
