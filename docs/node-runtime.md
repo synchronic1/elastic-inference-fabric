@@ -72,7 +72,9 @@ routes use this shared bearer token. This prototype assumes a trusted private
 network; HTTP is not encrypted and this is not a production identity system.
 
 The implemented Cloudflare path uses `node.fabric_url` and an outbound secure
-WebSocket with `GANGLION_FABRIC_TOKEN`. See [fabric.md](fabric.md). The older
+WebSocket with a pre-issued node-role Fabric Access Token in
+`GANGLION_FABRIC_TOKEN`. The token must be bound to this node ID; bootstrap is
+administrator-only and cannot connect a node. See [fabric.md](fabric.md). The older
 optional HTTP-heartbeat hook remains available for other control planes:
 
 ```text
@@ -105,7 +107,13 @@ Another machine needs its own binary and model paths.
 Native process working directories are isolated under `node.state_dir`, keeping
 backend-created log/cache files inside the ignored `.dendrite` state tree.
 
-## Live verification
+## Native timing and historical live verification
+
+Native snapshots may include the latest coherent, non-simulated generation and
+prompt timing sample, runtime/model provenance, sample count, and timestamp.
+Fabric normalizes timestamps to Unix milliseconds. This is an observed rate—not
+a benchmark or capacity promise—and is **Not measured** when absent. A timing
+sample does not imply its model remains resident unless the current snapshot says so.
 
 Automated verification: 27 tests passed, including the Oxen task-packet input,
 native process fixtures, cache accounting, attachment refresh, and shutdown draining.

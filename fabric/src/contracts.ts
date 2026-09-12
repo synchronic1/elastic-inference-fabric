@@ -18,6 +18,9 @@ export interface ModelSnapshot {
 export interface NodeSnapshot {
   schema_version: string; node_id: string; observed_at: number; uptime_seconds: number;
   execution_scope: string; active_requests: number;
+  performance?: { generation_tokens_per_second: number | null;
+    prompt_tokens_per_second: number | null; samples: number;
+    last_observed_at: number | null; model_id: string | null; runtime_id: string | null };
   hardware: { os: string; arch: string; hostname: string; cpu: string;
     logical_cpus: number; physical_cpus: number | null; memory_total_bytes: number;
     gpus: {vendor: string; name: string; memory_bytes: number | null; unified_memory?: boolean}[] };
@@ -51,7 +54,7 @@ export interface FabricJob {
 // GET /v1/tasks/:id -> FabricJob. Auth: Bearer token or HttpOnly fabric_session cookie.
 // POST /api/session {token:string} -> {ok:true} sets cookie. DELETE clears it.
 // Public agent docs: /.well-known/agent.json, /llms.txt, /openapi.json.
-// WebSocket node bridge GET /v1/nodes/connect?node_id=...; Bearer FABRIC_TOKEN.
+// WebSocket node bridge GET /v1/nodes/connect?node_id=...; Bearer node-bound access token.
 // Node -> cloud: {type:'heartbeat', snapshot:NodeSnapshot}; first message immediately.
 // Cloud -> node: {type:'execute', job_id:string, request:ExecuteRequest}
 // Node -> cloud: {type:'result', job_id:string, result:ExecuteResponse}

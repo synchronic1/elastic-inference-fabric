@@ -5,6 +5,7 @@ import uuid
 
 from dendrite.config import Config, ModelConfig
 from dendrite.hardware import current_load, discover_gguf, discover_hardware, file_identity
+from dendrite.performance import PerformanceTracker
 from dendrite.runtimes.base import RuntimeFailure
 from dendrite.runtimes.llama import LlamaRuntime
 from dendrite.runtimes.mock import MockRuntime
@@ -17,6 +18,7 @@ class Node:
         self.started_at = time.time()
         self.hardware = discover_hardware()
         self.discovered_models = discover_gguf(config.node.model_dirs)
+        self.performance = PerformanceTracker()
         self.runtimes = {
             cfg.id: (MockRuntime if cfg.kind == "mock" else LlamaRuntime)(cfg, config.node)
             for cfg in config.runtimes
@@ -78,6 +80,7 @@ class Node:
             "hardware": self.hardware,
             "load": current_load(),
             "active_requests": sum(r.lock.locked() for r in self.runtimes.values()),
+            "performance": self.performance.snapshot(),
             "runtimes": runtimes,
             "models": models,
             "discovered_gguf": self.discovered_models,
@@ -114,6 +117,7 @@ class Node:
         await self.refresh_attached()
         model = self.select(request)
         result = await self.runtimes[model.runtime].execute(model, request)
+        self.performance.observe(result, model.id, model.runtime)
         return ExecuteResponse(
             request_id=str(uuid.uuid4()),
             node_id=self.config.node.id,

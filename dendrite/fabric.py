@@ -42,6 +42,7 @@ def cloud_snapshot(node: Node) -> dict:
             "uptime_seconds",
             "execution_scope",
             "active_requests",
+            "performance",
             "models",
             "load",
         )

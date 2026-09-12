@@ -1,6 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import type { CreateFabricToken, FabricAccessToken, FabricPrincipal, FabricRole, IssuedFabricToken } from './access-contracts';
-import './access.css';
 
 type TokenForm = { label: string; role: FabricRole; node_id: string; expires_in_days: string };
 const initialForm: TokenForm = { label: '', role: 'agent', node_id: '', expires_in_days: '30' };

@@ -14,6 +14,7 @@ import type {
 } from "./contracts";
 import { PRIMARY_MODELS } from "./model-catalog";
 import AccessPanel from "./AccessPanel";
+import FabricTopology from "./FabricTopology";
 
 type RequestState = "loading" | "ready" | "error" | "auth";
 const API = "/api/fabric";
@@ -464,6 +465,7 @@ export default function App() {
               <small>local runtime only</small>
             </div>
           </section>
+          <FabricTopology fabric={fabric} activeNodeId={job?.status === "running" ? job.node_id : undefined} />
           <AccessPanel />
           <section className="section-head">
             <div>

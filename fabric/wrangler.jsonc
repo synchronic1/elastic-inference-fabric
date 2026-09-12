@@ -8,11 +8,14 @@
   "main": "worker/index.ts",
   "compatibility_date": "2026-09-01",
   "account_id": "5bdd4f746ccac889f54e026435565e70",
+  "vars": {
+    "FABRIC_MCP_ORIGINS": "https://elasticinferencefabric.airanger.dev,https://ganglion-fabric.medinas-sd.workers.dev,http://127.0.0.1:8787,http://localhost:8787"
+  },
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/v1/*", "/.well-known/*", "/llms.txt", "/openapi.json", "/healthz"]
+    "run_worker_first": ["/mcp", "/api/*", "/v1/*", "/.well-known/*", "/llms.txt", "/openapi.json", "/healthz"]
   },
   "durable_objects": { "bindings": [{ "name": "FABRIC", "class_name": "FabricRoom" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["FabricRoom"] }],

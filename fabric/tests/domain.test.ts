@@ -85,6 +85,29 @@ describe('node snapshot sanitation', () => {
   it('rejects a heartbeat that claims another node identity', () => {
     assert.throws(() => sanitizeNodeSnapshot(snapshot(), 'node-b'), /does not match connection/);
   });
+
+  it('sanitizes measured throughput and normalizes its Python timestamp to milliseconds', () => {
+    const clean = sanitizeNodeSnapshot({
+      ...snapshot(),
+      performance: {
+        generation_tokens_per_second: 18.75,
+        prompt_tokens_per_second: 42.5,
+        samples: 3,
+        last_observed_at: 1_700_000_001.25,
+        model_id: 'qwen3-1.7b',
+        runtime_id: 'ik-cpu',
+        ignored_capacity_claim: 999,
+      },
+    }, 'node-a');
+    assert.deepEqual(clean.performance, {
+      generation_tokens_per_second: 18.75,
+      prompt_tokens_per_second: 42.5,
+      samples: 3,
+      last_observed_at: 1_700_000_001_250,
+      model_id: 'qwen3-1.7b',
+      runtime_id: 'ik-cpu',
+    });
+  });
 });
 
 describe('placement policy', () => {

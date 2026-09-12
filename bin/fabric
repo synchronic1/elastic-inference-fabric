@@ -1,36 +1,62 @@
 #!/usr/bin/env python3
-"""Manage the fabric credential without printing it or writing it into the repo."""
+"""Manage fabric identities without printing credentials or storing them in the repo."""
 
 import argparse
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 ROOT = Path(__file__).resolve().parent.parent
 SERVICE = "ganglion.fabric/hackathon"
+DEFAULT_ORIGIN = "https://ganglion-fabric.medinas-sd.workers.dev"
 
 
-def credential(required=True):
-    token = os.environ.get("GANGLION_FABRIC_TOKEN")
+def identity_service(identity=None):
+    if identity is None:
+        return SERVICE
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", identity):
+        raise ValueError("Identity names need 1–64 letters, numbers, dots, hyphens or underscores")
+    return "ganglion.fabric/identity/" + identity
+
+
+def credential(required=True, identity=None):
+    service = identity_service(identity)
+    # Explicit identity selection must not silently use an ambient admin token.
+    token = os.environ.get("GANGLION_FABRIC_TOKEN") if identity is None else None
     if not token:
         result = subprocess.run(
-            ["security", "find-generic-password", "-s", SERVICE, "-w"],
+            ["security", "find-generic-password", "-s", service, "-w"],
             capture_output=True,
             text=True,
             check=False,
         )
         token = result.stdout.strip() if result.returncode == 0 else None
     if required and (not token or len(token) < 16):
-        raise ValueError(
-            "Run bin/fabric init or set GANGLION_FABRIC_TOKEN (at least 16 characters)"
-        )
+        raise ValueError("Fabric credential unavailable; initialize or issue this identity first")
     return token
+
+
+def store_credential(token, identity=None):
+    service = identity_service(identity)
+    if not re.fullmatch(r"[A-Za-z0-9_-]{16,256}", token):
+        raise ValueError("Refusing an invalid credential")
+    # Interactive stdin keeps the secret out of process argv and tool logs.
+    result = subprocess.run(
+        ["security", "-i"],
+        input=f'add-generic-password -s "{service}" -a "fabric" -w "{token}"\n',
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode or credential(required=False, identity=identity) != token:
+        raise ValueError("Could not store fabric credential in macOS Keychain")
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -38,43 +64,121 @@ class NoRedirect(HTTPRedirectHandler):
         return None  # Never forward a credential through a redirect.
 
 
+def validate_origin(value):
+    origin = urlsplit(value)
+    if (
+        origin.scheme not in ("http", "https")
+        or not origin.hostname
+        or origin.username
+        or origin.password
+        or origin.path not in ("", "/")
+        or origin.query
+        or origin.fragment
+        or (origin.scheme == "http" and origin.hostname not in ("127.0.0.1", "localhost", "::1"))
+    ):
+        raise ValueError("Origin must be HTTPS, or HTTP on loopback")
+    return value.rstrip("/")
+
+
+def api_request(origin, path, token, body=None, method=None):
+    origin = validate_origin(origin)
+    if not path.startswith("/") or path.startswith("//") or "#" in path:
+        raise ValueError("Use an absolute API path, not a URL")
+    req = Request(
+        origin + path,
+        data=None if body is None else json.dumps(body).encode(),
+        method=method,
+        headers={
+            "Authorization": "Bearer " + token,
+            "User-Agent": "Ganglion-Fabric/0.2",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with build_opener(NoRedirect).open(req, timeout=30) as response:
+            return json.load(response)
+    except HTTPError as exc:
+        # Never echo arbitrary response bodies: a remote server could reflect credentials.
+        raise ValueError(f"Fabric returned HTTP {exc.code}") from None
+
+
+def issue_token(args, issuer):
+    identity_service(args.name)
+    if credential(required=False, identity=args.name):
+        raise ValueError("Named identity already exists; choose another name")
+    body = {"label": args.label or args.name, "role": args.role, "expires_in_days": args.days}
+    if args.node_id:
+        body["node_id"] = args.node_id
+    issued = api_request(args.origin, "/api/tokens", issuer, body)
+    token = issued["token"]
+    access = issued["access"]
+    try:
+        store_credential(token, args.name)
+    except (ValueError, OSError):
+        # Compensate if local persistence failed; never leave an unknown usable key.
+        try:
+            api_request(
+                args.origin, "/api/tokens/" + quote(access["id"], safe=""), issuer, method="DELETE"
+            )
+        except (ValueError, OSError):
+            print(
+                "Keychain save and rollback failed; revoke token ID " + access["id"],
+                file=sys.stderr,
+            )
+        raise
+    print(json.dumps({"identity": args.name, "access": access, "stored": "macOS Keychain"}))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--identity", help="Named Keychain identity (default: bootstrap admin/env)")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("init", help="Create a random shared token in macOS Keychain if absent")
-    commands.add_parser("copy-token", help="Copy token to clipboard for the dashboard login")
-    commands.add_parser("publish-secret", help="Set Cloudflare FABRIC_TOKEN using Wrangler stdin")
-    run = commands.add_parser("run-node", help="Start Dendrite with the credential injected")
-    run.add_argument("--config", default=".dendrite/mac.toml")
-    request = commands.add_parser(
-        "request", help="Authenticated HTTP request; never prints credentials"
+    commands.add_parser("init", help="Create bootstrap admin credential if absent")
+    commands.add_parser("copy-token", help="Copy selected token for dashboard login")
+    commands.add_parser(
+        "publish-secret", help="Publish bootstrap FABRIC_TOKEN using Wrangler stdin"
     )
+    run = commands.add_parser("run-node", help="Start Dendrite using selected node identity")
+    run.add_argument("--config", default=".dendrite/mac.toml")
+    request = commands.add_parser("request", help="Authenticated JSON API request")
     request.add_argument("origin")
     request.add_argument("path", nargs="?", default="/v1/resources")
-    request.add_argument("--body-file", help="JSON request body path, or - for stdin (POST)")
+    request.add_argument("--body-file", help="JSON body path, or - for stdin (POST)")
+    request.add_argument("--method", choices=["GET", "POST", "DELETE"])
+    issue = commands.add_parser(
+        "issue-token", help="Mint token and save named identity in Keychain"
+    )
+    issue.add_argument("--name", required=True)
+    issue.add_argument("--label")
+    issue.add_argument("--role", choices=["agent", "node", "admin"], default="agent")
+    issue.add_argument("--node-id")
+    issue.add_argument("--days", type=int, default=30)
+    issue.add_argument("--origin", default=DEFAULT_ORIGIN)
+    revoke = commands.add_parser("revoke-token", help="Revoke one fabric token ID")
+    revoke.add_argument("token_id")
+    revoke.add_argument("--origin", default=DEFAULT_ORIGIN)
+    for name in ("mcp", "mcp-check"):
+        command = commands.add_parser(name, help="Run MCP stdio bridge or remote smoke check")
+        command.add_argument("--origin", default=DEFAULT_ORIGIN)
+        if name == "mcp-check":
+            command.add_argument("--submit", action="store_true", help="Run real Qwen smoke task")
     args = parser.parse_args()
     if args.command == "init":
+        if args.identity:
+            raise ValueError("Use issue-token for named identities")
         if credential(required=False):
-            print("Fabric credential already available; left unchanged.")
+            print("Fabric bootstrap credential already available; left unchanged.")
             return
-        token = secrets.token_urlsafe(32)
-        # security's interactive mode avoids placing the generated secret in argv.
-        result = subprocess.run(
-            ["security", "-i"],
-            input=f'add-generic-password -s "{SERVICE}" -a "fabric" -w "{token}"\n',
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if result.returncode or credential(required=False) != token:
-            raise ValueError("Could not create fabric credential in macOS Keychain")
-        print("Created Fabric credential in macOS Keychain; token not displayed.")
+        store_credential(secrets.token_urlsafe(32))
+        print("Created bootstrap credential in macOS Keychain; token not displayed.")
         return
-    token = credential()
+    token = credential(identity=args.identity)
     if args.command == "copy-token":
         subprocess.run(["pbcopy"], input=token, text=True, check=True)
         print("Fabric token copied. Paste into the dashboard; clear clipboard afterward.")
     elif args.command == "publish-secret":
+        if args.identity:
+            raise ValueError("Only the bootstrap credential can be published as FABRIC_TOKEN")
         subprocess.run(
             [str(ROOT / "fabric/node_modules/.bin/wrangler"), "secret", "put", "FABRIC_TOKEN"],
             cwd=ROOT / "fabric",
@@ -86,47 +190,44 @@ def main():
         env = dict(os.environ, GANGLION_FABRIC_TOKEN=token)
         os.chdir(ROOT)
         os.execvpe("uv", ["uv", "run", "dendrite", "serve", "--config", args.config], env)
-    else:
-        origin = urlsplit(args.origin)
-        if (
-            origin.scheme not in ("http", "https")
-            or not origin.hostname
-            or origin.username
-            or origin.password
-            or origin.path not in ("", "/")
-            or origin.query
-            or origin.fragment
-            or (
-                origin.scheme == "http" and origin.hostname not in ("127.0.0.1", "localhost", "::1")
+    elif args.command == "issue-token":
+        issue_token(args, token)
+    elif args.command == "revoke-token":
+        print(
+            json.dumps(
+                api_request(
+                    args.origin,
+                    "/api/tokens/" + quote(args.token_id, safe=""),
+                    token,
+                    method="DELETE",
+                )
             )
-        ):
-            raise ValueError("Origin must be HTTPS, or HTTP on loopback")
-        if not args.path.startswith("/") or args.path.startswith("//") or "#" in args.path:
-            raise ValueError("Use an absolute API path, not a URL")
+        )
+    elif args.command in ("mcp", "mcp-check"):
+        origin = validate_origin(args.origin)
+        script = "mcp-stdio.ts" if args.command == "mcp" else "mcp-smoke.ts"
+        argv = [str(ROOT / "fabric/node_modules/.bin/tsx"), str(ROOT / "fabric/scripts" / script)]
+        if getattr(args, "submit", False):
+            argv.append("--submit")
+        env = dict(os.environ, GANGLION_FABRIC_TOKEN=token, FABRIC_ORIGIN=origin)
+        os.execve(argv[0], argv, env)
+    else:
         body = None
         if args.body_file:
             raw = sys.stdin.read() if args.body_file == "-" else Path(args.body_file).read_text()
-            body = json.dumps(json.loads(raw)).encode()
-        req = Request(
-            args.origin.rstrip("/") + args.path,
-            data=body,
-            headers={
-                "Authorization": "Bearer " + token,
-                "User-Agent": "Ganglion-Fabric/0.1",
-                "Content-Type": "application/json",
-            },
-        )
-        try:
-            with build_opener(NoRedirect).open(req, timeout=30) as response:
-                print(response.read().decode())
-        except HTTPError as exc:
-            print(f"Fabric returned HTTP {exc.code}: {exc.read().decode()}", file=sys.stderr)
-            raise SystemExit(1) from None
+            body = json.loads(raw)
+        value = api_request(args.origin, args.path, token, body, args.method)
+        if isinstance(value, dict) and "token" in value:
+            value["token"] = "[redacted; use issue-token to persist a credential safely]"
+        print(json.dumps(value))
 
 
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+    except ValueError as exc:
+        print(f"Fabric operation failed: {exc}", file=sys.stderr)
+        raise SystemExit(1) from None
+    except (OSError, subprocess.CalledProcessError) as exc:
         print(f"Fabric operation failed: {type(exc).__name__}", file=sys.stderr)
         raise SystemExit(1) from None

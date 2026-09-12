@@ -187,6 +187,28 @@ function sanitizeModel(raw: unknown): ModelSnapshot {
   return model;
 }
 
+function sanitizePerformance(raw: unknown): NonNullable<NodeSnapshot['performance']> {
+  const value = object(raw, 'performance');
+  const generation = value.generation_tokens_per_second;
+  const prompt = value.prompt_tokens_per_second;
+  const samples = number(value.samples, 'performance.samples', 0, 1_000_000_000);
+  if (!Number.isInteger(samples)) throw new InputError('performance.samples must be an integer');
+  return {
+    generation_tokens_per_second: generation === null
+      ? null
+      : number(generation, 'performance.generation_tokens_per_second', 0, 1_000_000_000),
+    prompt_tokens_per_second: prompt === null
+      ? null
+      : number(prompt, 'performance.prompt_tokens_per_second', 0, 1_000_000_000),
+    samples,
+    last_observed_at: value.last_observed_at === null
+      ? null
+      : epochMilliseconds(value.last_observed_at, 'performance.last_observed_at'),
+    model_id: value.model_id === null ? null : string(value.model_id, 'performance.model_id', 256),
+    runtime_id: value.runtime_id === null ? null : string(value.runtime_id, 'performance.runtime_id', 256),
+  };
+}
+
 export function sanitizeNodeSnapshot(raw: unknown, expectedNodeId: string): NodeSnapshot {
   const value = object(raw, 'snapshot');
   if (!validNodeId(value.node_id) || value.node_id !== expectedNodeId) throw new InputError('snapshot node_id does not match connection');
@@ -202,6 +224,7 @@ export function sanitizeNodeSnapshot(raw: unknown, expectedNodeId: string): Node
     uptime_seconds: number(value.uptime_seconds, 'uptime_seconds'),
     execution_scope: string(value.execution_scope, 'execution_scope', 64),
     active_requests: number(value.active_requests, 'active_requests', 0, 1024),
+    ...(value.performance === undefined ? {} : { performance: sanitizePerformance(value.performance) }),
     hardware: {
       os: string(hardware.os, 'hardware.os', 128),
       arch: string(hardware.arch, 'hardware.arch', 128),

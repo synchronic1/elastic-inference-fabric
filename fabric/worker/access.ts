@@ -4,7 +4,7 @@ import type {
   FabricRole,
   IssuedFabricToken,
 } from '../src/access-contracts';
-import { validNodeId } from './domain';
+import { InputError, validNodeId } from './domain';
 
 const TOKEN_PREFIX = 'fat_';
 const SESSION_PREFIX = 'fas_';
@@ -36,11 +36,7 @@ interface SessionRow extends Record<string, SqlStorageValue> {
   expires_at: number;
 }
 
-export class AccessError extends Error {
-  constructor(message: string, readonly status = 400) {
-    super(message);
-  }
-}
+export class AccessError extends InputError {}
 
 export class AccessStore {
   constructor(
@@ -76,13 +72,13 @@ export class AccessStore {
 
   async authenticateBearer(token: string): Promise<FabricPrincipal | null> {
     if (typeof token !== 'string' || token.length === 0 || token.length > 512) return null;
-    const now = Date.now();
     if (this.hasBootstrapToken() && constantTimeEqual(token, this.bootstrapToken as string)) {
       return bootstrapPrincipal();
     }
     if (!validOpaqueSecret(token, TOKEN_PREFIX)) return null;
     const hash = await sha256Hex(token);
     const row = this.sql.exec<AccessTokenRow>('SELECT * FROM access_tokens WHERE secret_hash=?', hash).toArray()[0];
+    const now = Date.now();
     if (!row || !rowIsActive(row, now)) return null;
     this.sql.exec('UPDATE access_tokens SET last_used_at=? WHERE id=? AND revoked_at IS NULL', now, row.id);
     return principalFromRow(row);
@@ -90,9 +86,9 @@ export class AccessStore {
 
   async authenticateSession(cookie: string): Promise<FabricPrincipal | null> {
     if (!validOpaqueSecret(cookie, SESSION_PREFIX)) return null;
-    const now = Date.now();
     const hash = await sha256Hex(cookie);
     const session = this.sql.exec<SessionRow>('SELECT * FROM access_sessions WHERE session_hash=?', hash).toArray()[0];
+    const now = Date.now();
     if (!session) return null;
     if (session.expires_at <= now) {
       this.sql.exec('DELETE FROM access_sessions WHERE session_hash=?', hash);
@@ -119,7 +115,7 @@ export class AccessStore {
     return principal;
   }
 
-  async createToken(raw: unknown): Promise<IssuedFabricToken> {
+  async createToken(raw: unknown, authorize?: () => void): Promise<IssuedFabricToken> {
     const input = validateCreateToken(raw);
     const now = Date.now();
     const token = TOKEN_PREFIX + randomSecret();
@@ -132,6 +128,9 @@ export class AccessStore {
 
     const id = crypto.randomUUID();
     const expiresAt = now + input.expiresInDays * 24 * 60 * 60 * 1000;
+    // The caller can synchronously revalidate its admin principal after the
+    // hashing await and immediately before this authority-creating write.
+    authorize?.();
     this.sql.exec(`INSERT INTO access_tokens(
       id, secret_hash, token_prefix, label, role, node_id, created_at, expires_at, revoked_at, last_used_at
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)`,
@@ -161,22 +160,25 @@ export class AccessStore {
 
   async createSession(principal: FabricPrincipal): Promise<string> {
     const now = Date.now();
+    const initial = this.getPrincipal(principal.id);
+    if (!initial) throw new AccessError('principal is no longer authorized', 401);
+    this.pruneSessions(now);
+    const cookie = SESSION_PREFIX + randomSecret();
+    const sessionHash = await sha256Hex(cookie);
+    const bootstrapFingerprint = initial.id === 'bootstrap-admin'
+      ? await sha256Hex(this.bootstrapToken as string)
+      : null;
+    // All crypto awaits are complete. Recheck revocation/expiry synchronously
+    // and derive expiry from the current record immediately before insertion.
     const current = this.getPrincipal(principal.id);
     if (!current) throw new AccessError('principal is no longer authorized', 401);
-    this.pruneSessions(now);
     const count = this.sql.exec<{ count: number }>(
       'SELECT COUNT(*) AS count FROM access_sessions WHERE principal_id=? AND expires_at>?',
       current.id, now,
     ).one().count;
     if (count >= MAX_ACTIVE_SESSIONS_PER_PRINCIPAL) throw new AccessError('active session limit reached', 409);
-
-    const cookie = SESSION_PREFIX + randomSecret();
-    const sessionHash = await sha256Hex(cookie);
     const expiresAt = Math.min(now + SESSION_LIFETIME_MS, current.expires_at ?? Number.MAX_SAFE_INTEGER);
     if (expiresAt <= now) throw new AccessError('principal is expired', 401);
-    const bootstrapFingerprint = current.id === 'bootstrap-admin'
-      ? await sha256Hex(this.bootstrapToken as string)
-      : null;
     this.sql.exec(`INSERT INTO access_sessions(
       session_hash, principal_id, bootstrap_fingerprint, created_at, expires_at
     ) VALUES (?, ?, ?, ?, ?)`, sessionHash, current.id, bootstrapFingerprint, now, expiresAt);
