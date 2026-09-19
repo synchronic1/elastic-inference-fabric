@@ -1,0 +1,35 @@
+[node]
+id = "vm108-gpu-01"
+host = "127.0.0.1"
+port = 18090
+state_dir = "../.dendrite/vm108-gpu-01"
+fabric_url = "https://elasticinferencefabric.airanger.dev"
+fabric_token_env = "GANGLION_FABRIC_TOKEN"
+heartbeat_seconds = 10
+request_timeout_seconds = 150
+
+[[runtimes]]
+id = "atx-dual-3060"
+kind = "helios"
+mode = "attach"
+base_url = "http://127.0.0.1:8471"
+api_token_env = "HELIOS_API_TOKEN"
+
+[[runtimes]]
+id = "q4-v100"
+kind = "helios"
+mode = "attach"
+base_url = "http://127.0.0.1:8471"
+api_token_env = "HELIOS_API_TOKEN"
+
+[[models]]
+id = "qwen3.8-27b-atx-vm108"
+runtime = "atx-dual-3060"
+upstream_model = "qwen3.8-27b-atx-iq4_xs"
+capabilities = ["complete"]
+
+[[models]]
+id = "qwen3.8-27b-q4-vm108"
+runtime = "q4-v100"
+upstream_model = "qwen3.8-27b-q4_k_xl"
+capabilities = ["complete"]

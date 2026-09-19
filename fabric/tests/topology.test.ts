@@ -5,6 +5,21 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import FabricTopology from '../src/FabricTopology';
 import type { FabricState } from '../src/contracts';
 
+test('public demo shows architecture without inventing live inventory or activity', () => {
+  const markup = renderToStaticMarkup(createElement(FabricTopology, { fabric: null, activeNodeId: 'previous-private-node' }));
+  assert.match(markup, /DEMO · ARCHITECTURE ONLY/);
+  assert.match(markup, /Agent \/ harness/);
+  assert.match(markup, /Authenticated MCP router/);
+  assert.match(markup, /Dendrite · local inference/);
+  assert.match(markup, /CPU \/ GPU/);
+  assert.match(markup, /Schematic only/);
+  assert.match(markup, /href="#fabric-access"/);
+  assert.ok(!markup.includes('previous-private-node'));
+  assert.ok(!markup.includes('data-active="true"'));
+  assert.ok(!markup.includes('has-work'));
+  assert.ok(!markup.includes(' tok/s'));
+});
+
 const fabric: FabricState = {
   schema_version: '1', generated_at: 1_700_000_000_000,
   summary: { online_nodes: 1, total_nodes: 2, logical_cpus: 12, memory_total_bytes: 16 * 1024 ** 3, memory_available_bytes: 8 * 1024 ** 3, gpu_count: 1, resident_models: 1, available_models: 2, prefix_candidates: 0, active_requests: 1 },
@@ -23,9 +38,38 @@ test('topology renders actual fixture nodes and never invents throughput', () =>
   assert.ok(!markup.includes(' tok/s'));
 });
 
+test('topology labels the demo nodes while keeping their canonical IDs visible', () => {
+  const named: FabricState = { ...fabric, nodes: fabric.nodes.map((node, index) => ({
+    ...node, node_id: index === 0 ? 'peter-mac-cpu' : 'ubuntu-desktop-node',
+  })) };
+  const markup = renderToStaticMarkup(createElement(FabricTopology, { fabric: named }));
+  assert.match(markup, /Portable · Local/);
+  assert.match(markup, /Remote · Sweden/);
+  assert.match(markup, /peter-mac-cpu/);
+  assert.match(markup, /ubuntu-desktop-node/);
+  const preview = renderToStaticMarkup(createElement(FabricTopology, { fabric: null }));
+  assert.ok(!preview.includes('Sweden'));
+  assert.ok(!preview.includes('peter-mac-cpu'));
+});
+
 test('topology only marks the busy node as working when another node is idle', () => {
   const twoOnline: FabricState = { ...fabric, nodes: fabric.nodes.map((node) => node.node_id === 'quiet-node' ? { ...node, status: 'online', connected: true } : node) };
   const markup = renderToStaticMarkup(createElement(FabricTopology, { fabric: twoOnline }));
   assert.equal(markup.match(/data-active="true"/g)?.length, 1);
   assert.match(markup, /quiet-node/);
+});
+
+test('authenticated empty inventory is not presented as a demo', () => {
+  const markup = renderToStaticMarkup(createElement(FabricTopology, { fabric: { ...fabric, nodes: [], jobs: [] } }));
+  assert.match(markup, /data-view="live"/);
+  assert.match(markup, /No node heartbeat has been received/);
+  assert.ok(!markup.includes('ILLUSTRATIVE NODE'));
+});
+
+test('interrupted live connection labels stale snapshots and stops activity animation', () => {
+  const markup = renderToStaticMarkup(createElement(FabricTopology, { fabric, live: false }));
+  assert.match(markup, /data-view="stale"/);
+  assert.match(markup, /LAST KNOWN TOPOLOGY/);
+  assert.ok(!markup.includes('has-work'));
+  assert.ok(!markup.includes('data-active="true"'));
 });

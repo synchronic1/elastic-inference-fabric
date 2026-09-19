@@ -7,6 +7,7 @@ from dendrite.config import Config, ModelConfig
 from dendrite.hardware import current_load, discover_gguf, discover_hardware, file_identity
 from dendrite.performance import PerformanceTracker
 from dendrite.runtimes.base import RuntimeFailure
+from dendrite.runtimes.helios import HeliosRuntime
 from dendrite.runtimes.llama import LlamaRuntime
 from dendrite.runtimes.mock import MockRuntime
 from dendrite.schemas import ExecuteRequest, ExecuteResponse
@@ -19,8 +20,9 @@ class Node:
         self.hardware = discover_hardware()
         self.discovered_models = discover_gguf(config.node.model_dirs)
         self.performance = PerformanceTracker()
+        runtime_classes = {"mock": MockRuntime, "helios": HeliosRuntime}
         self.runtimes = {
-            cfg.id: (MockRuntime if cfg.kind == "mock" else LlamaRuntime)(cfg, config.node)
+            cfg.id: runtime_classes.get(cfg.kind, LlamaRuntime)(cfg, config.node)
             for cfg in config.runtimes
         }
         self.heartbeat = {
@@ -42,6 +44,23 @@ class Node:
                 for runtime in self.runtimes.values()
                 if runtime.config.mode == "attach"
             )
+        )
+
+    async def probe_chat_profiles(self) -> list[dict]:
+        """Explicit, bounded setup probe for already attached Helios models."""
+        await self.refresh_attached()
+        checks = [
+            (runtime, runtime.loaded_model)
+            for runtime in self.runtimes.values()
+            if isinstance(runtime, HeliosRuntime) and runtime.loaded_model is not None
+        ]
+        async def check(runtime: HeliosRuntime, model: ModelConfig) -> dict:
+            try:
+                return await runtime.probe_chat(model)
+            except RuntimeFailure:
+                return {"status": "unverified", "model_id": model.id}
+        return await asyncio.gather(
+            *(check(runtime, model) for runtime, model in checks)
         )
 
     def model_available(self, model: ModelConfig) -> bool:
@@ -93,8 +112,11 @@ class Node:
             for m in self.config.models
             if request.capability in m.capabilities
             and (request.model_id is None or m.id == request.model_id)
+            and (request.messages is None or self.runtimes[m.runtime].supports_chat)
         ]
         if not candidates:
+            if request.messages is not None:
+                raise RuntimeFailure("No chat-capable model satisfies this selection", 404)
             raise RuntimeFailure(
                 "No configured model satisfies this capability/model selection", 404
             )
@@ -113,13 +135,16 @@ class Node:
             ),
         )
 
-    async def execute(self, request: ExecuteRequest) -> ExecuteResponse:
+    async def execute(
+        self, request: ExecuteRequest, execution_id: str | None = None
+    ) -> ExecuteResponse:
         await self.refresh_attached()
         model = self.select(request)
-        result = await self.runtimes[model.runtime].execute(model, request)
+        request_id = execution_id or str(uuid.uuid4())
+        result = await self.runtimes[model.runtime].execute(model, request, request_id)
         self.performance.observe(result, model.id, model.runtime)
         return ExecuteResponse(
-            request_id=str(uuid.uuid4()),
+            request_id=request_id,
             node_id=self.config.node.id,
             runtime_id=model.runtime,
             model_id=model.id,

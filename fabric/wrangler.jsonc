@@ -7,8 +7,16 @@
   ],
   "main": "worker/index.ts",
   "compatibility_date": "2026-09-01",
+  "define": {
+    "import.meta.url": "\"file:///worker/index.mjs\"",
+    "process.env.COPILOTKIT_TELEMETRY_DISABLED": "\"true\"",
+    "process.env.DO_NOT_TRACK": "\"true\""
+  },
   "account_id": "5bdd4f746ccac889f54e026435565e70",
   "vars": {
+    "AMBIGUOUS_AGENT_ID": "7288e0de-be73-4dc8-9b95-1ef303accedd",
+    "AMBIGUOUS_WORKSPACE_ID": "fb5b56aa-97d6-48a1-8971-508765070ecc",
+    "AMBIGUOUS_PROJECT_ID": "bf06213c-151b-42c3-ac47-1181857d8f79",
     "FABRIC_MCP_ORIGINS": "https://elasticinferencefabric.airanger.dev,https://ganglion-fabric.medinas-sd.workers.dev,http://127.0.0.1:8787,http://localhost:8787"
   },
   "assets": {

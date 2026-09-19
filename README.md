@@ -83,9 +83,13 @@ Edit [configs/dendrite.local.toml](configs/dendrite.local.toml) for that machine
 
 ```sh
 uv sync --locked
+uv run dendrite probe --check-completion   # read-only: what is already on this host
 uv run dendrite inspect --config configs/dendrite.local.toml
 uv run dendrite serve --config configs/dendrite.local.toml
 ```
+
+`dendrite probe` scans loopback only, writes nothing, and prints a config block to
+paste; see [the probe reference](docs/node-runtime.md#node-onboarding-probe).
 
 Use [the attach configuration](configs/dendrite.attach.toml) for an existing local
 server. Dendrite verifies its model ID and never owns its process lifecycle.
@@ -94,9 +98,10 @@ result is explicitly marked.
 
 ## Execute a task
 
-Requests use **raw completion prompts**. `prefix` is prepended exactly to `prompt`;
-the caller is responsible for the model's chat template, if one is needed.
-This example uses the Qwen3 template for the configured Mac node:
+This local example uses the raw completion contract for the configured Mac
+node. `prefix` is prepended exactly to `prompt`, so a raw caller supplies the
+model's chat template. Fabric agents can instead send structured `messages`
+to the Helios-backed GPU nodes; see [the Fabric API](docs/fabric.md#agent-native-discovery-and-tasks).
 
 ```sh
 curl -sS http://127.0.0.1:8090/v1/execute \

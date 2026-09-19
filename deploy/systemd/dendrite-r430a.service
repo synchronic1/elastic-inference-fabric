@@ -1,0 +1,21 @@
+[Unit]
+Description=Dendrite Fabric node for VM404 Helios GPU model
+Wants=network-online.target
+After=network-online.target helios.service
+
+[Service]
+Type=simple
+User=rm
+Group=rm
+WorkingDirectory=/home/rm/dendrite-node
+EnvironmentFile=/etc/dendrite/r430a-gpu-01.env
+ExecStart=/home/rm/dendrite-node/.venv/bin/dendrite serve --config /home/rm/dendrite-node/configs/r430a-gpu-helios.toml
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

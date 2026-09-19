@@ -39,6 +39,8 @@ class Handler(BaseHTTPRequestHandler):
             self.reply({"status": "ok"})
         elif self.path == "/v1/models":
             self.reply({"data": [{"id": args.alias}]})
+        elif self.path == "/props":
+            self.reply({"model_alias": args.alias, "chat_template": "fixture-template"})
         else:
             self.reply({}, 404)
 
@@ -56,8 +58,11 @@ class Handler(BaseHTTPRequestHandler):
         if mode == "error":
             return self.reply({"error": "test error"}, 500)
         assert request["stream"] is False
-        assert request["cache_prompt"] is True
-        assert request["id_slot"] == 0
+        if "id_slot" in request:
+            assert request["cache_prompt"] is True
+            assert request["id_slot"] == 0
+        else:
+            assert "cache_prompt" not in request
         cached = len(os.path.commonprefix([Handler.previous, request["prompt"]]))
         Handler.previous = request["prompt"]
         self.reply(

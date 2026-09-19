@@ -41,6 +41,105 @@ function setup(bootstrapToken: string | null = 'legacy-bootstrap-secret'): { dat
 }
 
 describe('token issuance and validation', () => {
+  it('supports explicit non-expiry without changing the 30-day default', async () => {
+    const { database, store } = setup();
+    const issued = await store.createToken({ label: 'Persistent demo', role: 'agent', expires_in_days: null });
+    assert.equal(issued.access.expires_at, null);
+    const session = await store.createSession(issued.access);
+    const row = database.prepare('SELECT expires_at FROM access_sessions').get() as { expires_at: number };
+    assert.ok(row.expires_at > Date.now() && row.expires_at <= Date.now() + 43_200_000);
+    assert.equal((await store.authenticateSession(session))?.role, 'agent');
+    store.revokeToken(issued.access.id);
+    assert.equal(await store.authenticateBearer(issued.token), null);
+    assert.equal(await store.authenticateSession(session), null);
+  });
+
+  it('updates only active agent/viewer metadata while preserving secrets, identity and sessions', async () => {
+    const { database, store } = setup();
+    const viewer = await store.createToken({ label: 'Demo', role: 'viewer', expires_in_days: 1 });
+    const session = await store.createSession(viewer.access);
+    const before = database.prepare('SELECT secret_hash FROM access_tokens WHERE id=?').get(viewer.access.id);
+    const updated = store.updateToken(viewer.access.id, { role: 'agent', expires_in_days: null });
+    assert.equal(updated.role, 'agent');
+    assert.equal(updated.expires_at, null);
+    assert.equal(updated.id, viewer.access.id);
+    assert.deepEqual(database.prepare('SELECT secret_hash FROM access_tokens WHERE id=?').get(viewer.access.id), before);
+    assert.ok(!JSON.stringify(updated).includes(viewer.token));
+    assert.equal(Object.hasOwn(updated, 'secret_hash'), false);
+    assert.equal((await store.authenticateBearer(viewer.token))?.role, 'agent');
+    assert.equal((await store.authenticateSession(session))?.role, 'agent');
+    store.updateToken(viewer.access.id, { role: 'viewer' });
+    assert.equal((await store.authenticateSession(session))?.role, 'viewer');
+    assert.equal(store.getPrincipal(viewer.access.id)?.expires_at, null);
+    const renewed = store.updateToken(viewer.access.id, { expires_in_days: 7 });
+    assert.equal(renewed.role, 'viewer');
+    assert.ok(renewed.expires_at! >= Date.now() + 7 * 86_400_000 - 1000);
+    for (const body of [{}, { role: 'admin' }, { role: 'node' }, { node_id: 'changed' }, { secret_hash: 'changed' }, { expires_in_days: 0 }, { expires_in_days: 1.5 }, { expires_in_days: 366 }, { expires_in_days: 'never' }]) {
+      assert.throws(() => store.updateToken(viewer.access.id, body), AccessError);
+    }
+    const admin = await store.createToken({ label: 'Admin', role: 'admin' });
+    const node = await store.createToken({ label: 'Node', role: 'node', node_id: 'smoke-node' });
+    for (const token of [admin, node]) {
+      assert.throws(() => store.updateToken(token.access.id, { role: 'agent' }), (error: unknown) => error instanceof AccessError && error.status === 403);
+    }
+    database.prepare('UPDATE access_tokens SET expires_at=? WHERE id=?').run(Date.now() - 1, viewer.access.id);
+    assert.throws(() => store.updateToken(viewer.access.id, { expires_in_days: null }), /active token not found/);
+    store.revokeToken(viewer.access.id);
+    assert.throws(() => store.updateToken(viewer.access.id, { role: 'agent' }), /active token not found/);
+    assert.throws(() => store.updateToken('bootstrap-admin', { role: 'agent' }), /active token not found/);
+  });
+
+  it('issues expiring viewer tokens, supports sessions, and immediately revokes both', async () => {
+    const { database, store } = setup();
+    const issued = await store.createToken({ label: 'Shared demo viewer', role: 'viewer', expires_in_days: 1 });
+    assert.equal(issued.access.role, 'viewer');
+    assert.equal(issued.access.node_id, null);
+    assert.equal(issued.access.expires_at! - issued.access.created_at, 86_400_000);
+    const session = await store.createSession(issued.access);
+    assert.equal((await store.authenticateSession(session))?.role, 'viewer');
+    assert.equal((await store.authenticateBearer(issued.token))?.role, 'viewer');
+    await assert.rejects(store.createToken({ label: 'Invalid viewer', role: 'viewer', node_id: 'mac-01' }), /only node tokens/);
+    assert.equal(store.revokeToken(issued.access.id), true);
+    assert.equal(await store.authenticateBearer(issued.token), null);
+    assert.equal(await store.authenticateSession(session), null);
+    const expiring = await store.createToken({ label: 'Expired demo', role: 'viewer', expires_in_days: 1 });
+    const expiringSession = await store.createSession(expiring.access);
+    database.prepare('UPDATE access_tokens SET expires_at=? WHERE id=?').run(Date.now() - 1, expiring.access.id);
+    assert.equal(await store.authenticateBearer(expiring.token), null);
+    assert.equal(await store.authenticateSession(expiringSession), null);
+  });
+
+  it('migrates the legacy role constraint without losing tokens or sessions and is idempotent', async () => {
+    const { database, store } = setup();
+    const admin = await store.createToken({ label: 'Existing admin', role: 'admin' });
+    const agent = await store.createToken({ label: 'Existing agent', role: 'agent' });
+    const node = await store.createToken({ label: 'Existing node', role: 'node', node_id: 'mac-01' });
+    const revoked = await store.createToken({ label: 'Revoked agent', role: 'agent' });
+    store.revokeToken(revoked.access.id);
+    const session = await store.createSession(admin.access);
+    const rows = database.prepare('SELECT * FROM access_tokens ORDER BY id').all();
+    const sessions = database.prepare('SELECT * FROM access_sessions').all();
+    // Reconstruct the actual pre-viewer CHECK constraint with the same rows.
+    const schema = (database.prepare("SELECT sql FROM sqlite_master WHERE name='access_tokens'").get() as { sql: string }).sql;
+    database.exec('ALTER TABLE access_tokens RENAME TO saved_tokens');
+    database.exec(schema.replace(", 'viewer'", ''));
+    database.exec('INSERT INTO access_tokens SELECT * FROM saved_tokens');
+    database.exec('DROP TABLE saved_tokens');
+    assert.throws(() => database.prepare("UPDATE access_tokens SET role='viewer' WHERE id=?").run(agent.access.id), /CHECK/);
+    database.exec('BEGIN');
+    try { store.initialize(); store.initialize(); database.exec('COMMIT'); }
+    catch (error) { database.exec('ROLLBACK'); throw error; }
+    assert.deepEqual(database.prepare('SELECT * FROM access_tokens ORDER BY id').all(), rows);
+    assert.deepEqual(database.prepare('SELECT * FROM access_sessions').all(), sessions);
+    assert.equal((await store.authenticateSession(session))?.id, admin.access.id);
+    assert.equal((await store.authenticateBearer(agent.token))?.role, 'agent');
+    assert.equal((await store.authenticateBearer(node.token))?.node_id, 'mac-01');
+    assert.equal(await store.authenticateBearer(revoked.token), null);
+    assert.equal((await store.createToken({ label: 'New viewer', role: 'viewer' })).access.role, 'viewer');
+    assert.ok(database.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name='access_tokens_active'").get());
+    assert.equal(database.prepare("SELECT name FROM sqlite_master WHERE name='access_tokens_pre_viewer'").get(), undefined);
+  });
+
   it('defaults to a 30-day agent and persists only a SHA-256 hash', async () => {
     const { database, store } = setup();
     const before = Date.now();

@@ -1,0 +1,20 @@
+[Unit]
+Description=Dendrite Fabric node for VM108 Helios GPU models
+After=network-online.target helios.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rm
+Group=rm
+WorkingDirectory=/home/rm/dendrite-node
+EnvironmentFile=/etc/dendrite/vm108-gpu-01.env
+ExecStart=/home/rm/dendrite-node/.venv/bin/dendrite serve --config /home/rm/dendrite-node/configs/vm108-gpu.toml
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

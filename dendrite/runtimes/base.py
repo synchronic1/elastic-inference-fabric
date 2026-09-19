@@ -34,6 +34,10 @@ class Runtime(ABC):
     def simulated(self) -> bool:
         return self.config.kind == "mock"
 
+    @property
+    def supports_chat(self) -> bool:
+        return self.config.kind == "helios"
+
     def model_fingerprint(self, model: ModelConfig) -> str | None:
         if self.simulated:
             return "simulated:" + model.id
@@ -59,7 +63,9 @@ class Runtime(ABC):
         finally:
             self.lock.release()
 
-    async def execute(self, model: ModelConfig, request: ExecuteRequest) -> dict:
+    async def execute(
+        self, model: ModelConfig, request: ExecuteRequest, execution_id: str | None = None
+    ) -> dict:
         async with self.lane():
             self.validate_request(request)
             started = time.monotonic()
@@ -69,7 +75,7 @@ class Runtime(ABC):
                     self.state = "generating"
                     candidate = self.cache.matches(request.prefix, self.instance, self.fingerprint)
                     self.cache.clear()  # In-flight slot state must not be advertised as reusable.
-                    result = await self.generate(request)
+                    result = await self.generate(request, execution_id)
                     if self.config.mode == "managed" and not result.get("truncated", False):
                         self.cache.record(
                             request.prefix, self.instance, self.fingerprint, self.simulated
@@ -83,7 +89,8 @@ class Runtime(ABC):
                         "usage": result.get("usage", {}),
                         "cache": {
                             "candidate_before_request": candidate,
-                            "reuse_attempted": True,
+                            "reuse_attempted": self.config.mode == "managed"
+                            and self.config.kind != "helios",
                             "reported_cached_tokens": result.get("cached_tokens"),
                             "portable": False,
                             "simulated": self.simulated,
@@ -132,6 +139,7 @@ class Runtime(ABC):
             "last_error": self.last_error,
             "supports_model_switch": self.config.mode == "managed",
             "supports_cache_transfer": False,
+            "supports_chat": self.supports_chat,
         }
 
     @abstractmethod
@@ -141,7 +149,7 @@ class Runtime(ABC):
         """Reject invalid work before loading or disturbing a resident model."""
 
     @abstractmethod
-    async def generate(self, request: ExecuteRequest) -> dict: ...
+    async def generate(self, request: ExecuteRequest, execution_id: str | None = None) -> dict: ...
 
     @abstractmethod
     async def stop(self): ...

@@ -15,3 +15,4 @@ fabric/dist/
 fabric/.wrangler/
 fabric/.dev.vars
 fabric/.dev.vars.*
+.DS_Store

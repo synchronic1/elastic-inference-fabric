@@ -1,4 +1,4 @@
-export type FabricRole = 'admin' | 'agent' | 'node';
+export type FabricRole = 'admin' | 'agent' | 'node' | 'viewer';
 
 export interface FabricPrincipal {
   id: string;
@@ -19,7 +19,12 @@ export interface CreateFabricToken {
   label: string;
   role: FabricRole;
   node_id?: string;
-  expires_in_days?: number;
+  expires_in_days?: number | null;
+}
+
+export interface UpdateFabricToken {
+  role?: 'agent' | 'viewer';
+  expires_in_days?: number | null;
 }
 
 export interface IssuedFabricToken {
@@ -31,4 +36,6 @@ export interface IssuedFabricToken {
 // Admin only: GET /api/tokens -> {tokens: FabricAccessToken[]}
 // POST /api/tokens CreateFabricToken -> IssuedFabricToken (secret returned once)
 // DELETE /api/tokens/:id -> {ok:true}; revokes token and its sessions/connections.
+// Admin only: PATCH /api/tokens/:id UpdateFabricToken -> {access: FabricAccessToken}.
+// Only active agent/viewer tokens can be updated. Explicit null expiry means never.
 // POST /api/session {token} -> {ok:true,principal}; opaque HttpOnly session cookie.

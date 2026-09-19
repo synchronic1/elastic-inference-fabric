@@ -1,0 +1,17 @@
+.fabric-local-chat { height: 28rem; max-height: 75vh; min-height: 20rem; width: 100%; border: 1px solid #697c87; border-radius: 12px; overflow: hidden; }
+.fabric-chat-error { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem 1rem; border: 1px solid #b6694d; border-radius: 8px; line-height: 1.4; }
+.fabric-chat-error button { flex: none; }
+.fabric-copilot > p, #copilot-console > p { max-width: 75ch; line-height: 1.6; }
+.fabric-chat-diagnostics { margin: .75rem 0 1rem; padding: .75rem 1rem; border: 1px solid #697c87; border-radius: 8px; font-size: .9rem; }
+.fabric-chat-diagnostics ul { list-style: none; margin: .5rem 0; padding: 0; }
+.fabric-chat-diagnostics li { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .3rem 0; }
+.fabric-chat-diagnostics p { margin: .5rem 0 0; line-height: 1.5; }
+.fabric-copilot .section-title { gap: 1rem; flex-wrap: wrap; }
+.fabric-local-chat textarea { font: inherit; }
+.fabric-assistant-text { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
+.fabric-chat-progress { margin: .75rem 1rem; color: #6d8797; font-size: .9rem; }
+@media (max-width: 600px) { .fabric-local-chat { height: 26rem; } .fabric-chat-error { align-items: flex-start; flex-direction: column; } }
+.fabric-copilot { padding: 24px; margin: 0 0 32px; border: 1px solid #284049; border-radius: 6px; background: #0b181e; }
+.fabric-copilot .section-title { display: flex; justify-content: space-between; align-items: center; }
+.fabric-copilot h2 { margin: 0; font-size: 22px; }
+[data-theme="light"] .fabric-copilot { background: #fff; border-color: #cad5df; color: #172b3a; }

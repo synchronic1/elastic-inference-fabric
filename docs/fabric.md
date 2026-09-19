@@ -2,9 +2,10 @@
 
 Dashboard: https://ganglion-fabric.medinas-sd.workers.dev.
 Custom hostname: https://elasticinferencefabric.airanger.dev.
-The stable `workers.dev` hostname remains the operational fallback. Custom-DNS
-authority and managed-record answers are currently unresolved; this is not a
-cache-only issue. Do not delete or recreate DNS records to work around it.
+The stable `workers.dev` hostname remains the operational fallback. The custom
+hostname was reachable from the Mac for live authentication/API checks later
+on 2026-09-12. Earlier DNS paths disagreed; the cause of that discrepancy was
+not proven. Do not delete or recreate Workers-managed DNS records.
 See the [DNS support packet](dns-repair.md).
 
 `fabric/` contains a React dashboard and a native Cloudflare Worker. A SQLite
@@ -28,8 +29,20 @@ binary paths, local process IDs, and runtime errors are omitted.
 
 ## Access tokens and sessions
 
-Fabric uses pre-issued Fabric Access Tokens (FATs), with `admin`, `agent`, or
-`node` roles. Node tokens require a bound `node_id`; agent jobs are scoped to
+The header always links to **Sign in** (`/#fabric-access`) and **Access tokens**
+(`/#access-tokens`). The public sign-in form appears immediately, even while
+inventory is loading or unavailable. The public token section explains
+administrator provisioning; it does not allow anonymous token creation.
+
+For the project owner's first administrator session on the configured Mac,
+run `bin/fabric copy-token` from this repository and paste the copied bootstrap
+credential into **Sign in**. Under **Access tokens**, an administrator can use
+**Issue a Fabric access token**, selecting label, role, node binding when needed,
+and expiry. Copy the new secret once and distribute it securely to its intended
+agent/node. Never distribute the bootstrap administrator credential.
+
+Fabric uses pre-issued Fabric Access Tokens (FATs), with `admin`, `agent`, `node`,
+or read-only `viewer` roles. Node tokens require a bound `node_id`; agent jobs are scoped to
 their token identity. Rotation creates new future-job ownership while admins can
 view history. Revocation blocks new calls and reads immediately, though already
 accepted local work may finish.
@@ -51,6 +64,41 @@ bin/fabric --identity codex copy-token
 No secret is written into tracked configuration. Issuance uses the bootstrap
 administrator by default; an existing named administrator can instead be selected
 with `--identity NAME` before `issue-token`. Agents cannot issue tokens.
+
+### Shared demo viewer
+
+**Demo policy update:** the existing shared demo token has been upgraded to an
+agent identity with no expiry at the operator's explicit request. The viewer
+role itself remains read-only; the shared token's original label is historical.
+Agent access can submit work to eligible connected nodes and read its own jobs,
+but cannot enroll nodes or administer tokens. All holders share the same job
+identity. Node enrollment still requires a separate node-bound credential;
+see [Ubuntu node setup](remote-linux-node.md).
+
+For a demo, an administrator can issue a short-lived **Viewer (read-only)**
+token and share that credential with attendees. It exposes actual node inventory,
+hardware, model/runtime state, and reported performance. It does not expose jobs
+or their results, and cannot submit workloads, use MCP, connect nodes, or manage
+tokens. Both bearer and dashboard-cookie requests enforce these boundaries.
+The dashboard labels viewer sessions read-only and hides task submission/results.
+
+```sh
+bin/fabric issue-token --name demo-viewer --label 'Shared demo viewer' --role viewer --days 1
+bin/fabric --identity demo-viewer copy-token
+```
+
+Paste the token into **Sign in**; it is not embedded in the landing-page bundle
+or URLs. Shared viewers use one identity (not individual audit attribution),
+with the existing 100-active-session cap. An admin can revoke it under
+**Access tokens** at any time; all its cookies become invalid immediately.
+
+The viewer upgrade rebuilds only the token table's role constraint, preserving
+all token rows and session identities, and recreates the active-token index.
+Initialization is wrapped in [Cloudflare's synchronous SQLite transaction](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/#transactionsync)
+so a failed upgrade rolls back. Migration preservation/idempotency, viewer
+expiry/revocation, and UI restrictions are covered by tests. The local auth
+smoke also checks read-only bearer/cookie requests, empty job lists, rejected
+workloads/token management/MCP/node upgrades, and immediate revocation.
 New tokens default to 30 days (1–365 configurable); metadata is listed at
 `GET /api/tokens`. Revoke an ID with `bin/fabric revoke-token TOKEN_ID`.
 
@@ -125,10 +173,24 @@ bin/fabric --identity codex request https://YOUR-WORKER.workers.dev /v1/tasks \
   --body-file examples/qwen-task.json
 ```
 
-Task fields are `capability`, `prompt`, optional `prefix`, `model_id`,
-`max_tokens`, `temperature`, and `allow_simulated` (default false).
-Native input is exactly **prefix + prompt**. Use the model's chat template;
-the dashboard's Qwen example supplies one. Results are not streamed.
+For ordinary text chat, send `messages` and let the selected node apply its
+resident model's template:
+
+```json
+{"capability":"complete","messages":[{"role":"user","content":"What is 2+2? Answer briefly."}]}
+```
+
+`messages` accepts up to 32 text-only `system`, `user`, or `assistant` entries,
+with a user message last. Chat placement requires a runtime that advertises
+`supports_chat`; older raw-only nodes are excluded. For advanced raw completion,
+send `prompt` and optional `prefix` instead. Raw input remains exactly
+**prefix + prompt** with no inserted template. The two input forms cannot be
+combined. Either form accepts optional `model_id`, `max_tokens`, `temperature`,
+and `allow_simulated` (default false). Results are not streamed.
+The dashboard's task form is one independent inference job per submission; it
+does not retain conversation history or provide web search. Its output limit is
+adjustable (default 512 tokens). If a node returns no visible text, Fabric marks
+the job failed and retains usage metadata rather than showing a blank success.
 
 ## Placement and liveness
 
@@ -146,6 +208,14 @@ disconnect. An uncertain failure is not proof that no computation occurred.
 
 ## Dashboard topology and timing
 
+The landing page shows a clearly labeled architecture-only demo at `/#flow`
+without authentication, above the model roster. It shows agent → authenticated
+MCP router → illustrative Dendrite/runtime/model, plus returning heartbeat and
+result paths. It contains no actual node identities, resource counts, or rates.
+Signing in replaces the schematic with live inventory; a connection error keeps
+the last snapshot visibly labeled as stale. Private inventory endpoints remain
+authenticated.
+
 The live topology renders only actual authenticated node snapshots: agent or
 harness → MCP router → Dendrite node → local runtime/model. Heartbeats and
 results travel back from nodes. Online/stale/offline state and resident, cached,
@@ -155,6 +225,19 @@ Generation rate is the latest coherent native timing observation with its
 reporting model/runtime and timestamp. It is not a benchmark or capacity
 guarantee. Missing/null timing displays as **Not measured**; only currently
 reported model provision is shown as available.
+
+The throughput bench grows vertically with the reported node inventory, with
+one complete lane per node and no four-node height cap. New nodes appear on the
+next live snapshot without a page reload; use normal page scrolling to reach
+later lanes. Stale/offline nodes retain their labeled lanes while they remain
+in inventory. Removing a node from inventory contracts the bench.
+
+Demo presentation labels are shared by the flow diagram, throughput bench/table,
+and resource cards: `peter-mac-cpu` displays as **Mac — Portable · Local**;
+`ubuntu-desktop-node` displays as **Ubuntu node — Remote · Sweden**. These are
+operator-supplied labels, not automatic geolocation. Canonical node IDs remain
+visible and unchanged in authentication, routing, and agent APIs. Other nodes
+keep their reported IDs without inferred device type or location.
 
 Prefix candidates are hashes/locality hints, not portable KV state or measured
 cache hits. CPU/GPU inventory reports detected hardware, not necessarily
@@ -210,6 +293,83 @@ administrative computer-use policy; build/SSR and live HTTP checks passed.
 The local Git repository is `AiTinkerersVenice` on `main`. Existing history and
 remote configuration were preserved; this implementation's working changes
 have not been committed or pushed.
+
+Landing-page demo update: `cfa8e774-89d4-4dd6-86e5-859901a85d07`.
+The diagram is now above the roster and visible without login, with an explicit
+architecture-only label. All 30 Worker/dashboard tests and the production build
+passed, including public-demo, empty-live, stale-snapshot, and placement checks.
+
+Auth-discoverability update: `9a4de457-c4f9-454c-b871-516cf90f9fcc`.
+31 Worker/dashboard tests and the production build passed. On the custom domain,
+a temporary agent token was issued by the administrator, authenticated, denied
+token-administration access, listed without revealing its secret, revoked, and
+then rejected. The temporary credential is no longer active. Browser inspection
+remains blocked by an administrative policy, so this is rendered-markup/build
+and live API verification, not a claimed visual browser check.
+
+### Shared viewer deployment — 2026-09-12
+
+Worker version `b2d14789-4e81-4255-aef3-f2c506313cbb` added read-only viewers.
+34 Worker/dashboard tests, 15 Fabric CLI tests, and the expanded local auth
+smoke passed. Live verification checked viewer bearer/cookie inventory,
+empty jobs, rejected task/token/MCP operations, and preservation of the existing
+agent and node identities. One temporary verification session was logged out;
+the shared token remains active for the requested demo.
+
+Issued identity: `demo-viewer-20260912`; token ID
+`88a4aaef-cdfc-43e4-9850-f61f9c72f29f`; label **Shared hackathon demo viewer**.
+Original expiry: **2026-09-13 13:43 PDT**, subsequently removed by the approved
+demo upgrade below. Its secret is stored in the named macOS
+Keychain identity and shared directly with the operator, not committed or
+embedded in frontend assets. Retrieve via
+`bin/fabric --identity demo-viewer-20260912 copy-token`, or revoke via the admin
+dashboard. Anyone holding it can inspect the live inventory until expiry or
+revocation; this deliberately does not provide individual attendee attribution.
+
+Local Wrangler logged an unread-request-stream warning for rejected token POSTs
+(including the pre-existing agent denial path), while returning the expected
+403 responses. This did not fail the smoke assertions; it is not claimed fixed.
+
+### Branding and theme
+
+Deployed Worker version: `d252dab7-3c45-4dd3-9fa9-f9f3a623780d`.
+All 38 Worker/dashboard tests and the production build passed.
+
+The public dashboard uses the name **Elastic Inference Fabric**, a monochrome
+connected-compute-tile mark, and a matching SVG favicon. Internal Worker,
+Durable Object, CLI, and node service names remain unchanged.
+
+The header light/dark button applies to the full dashboard, including topology,
+access controls, model cards, and workload panels. First load respects the
+device preference; an explicit choice persists under the device-local
+`eif-theme` key and is applied before paint. If browser storage is blocked,
+switching still works for the current page. No credentials are stored with the
+theme preference. Automated tests cover startup priority, both toggle directions,
+and storage-denied behavior; these are not visual browser QA.
+
+### Non-expiring demo agent — 2026-09-12
+
+Worker version `e64d0fe6-db8f-4885-8a68-aa8e1e7911f1` adds an administrator-only
+PATCH operation for active agent/viewer token role and expiry. The existing
+shared token ID `88a4aaef-cdfc-43e4-9850-f61f9c72f29f` now has `role: agent` and
+`expires_at: null`; the secret did not change. Its old label containing “viewer”
+is historical. Refresh the dashboard to fetch the current role.
+
+Live checks confirmed non-read-only inventory, denied token administration,
+MCP discovery, and real inference through the same shared token. Job
+`68f5d204-c8e6-4537-a0c0-249a47f11114` succeeded on `peter-mac-cpu` with
+`qwen3-1.7b`, returned `4`, and reported `simulated:false` (2,046.87 ms local
+elapsed time). This was a connectivity/authorization test, not a benchmark.
+
+Token expiry is optional only when an administrator explicitly requests it;
+omitting expiry still defaults to 30 days. CLI issuance supports `--no-expiry`.
+Sessions retain a finite 12-hour lifetime; a non-expiring token can sign in again.
+Revocation, role restrictions, admission/size/time bounds and actual node
+capacity remain enforced. This does not grant unlimited physical compute or
+anonymous node enrollment. The new admin PATCH cannot change node/admin tokens
+or resurrect expired/revoked tokens. Local integration checked session role
+refresh and cookie-Origin restrictions; an initial smoke attempt was interrupted
+by local development reload, and the stable rerun passed.
 
 ## References
 

@@ -18,14 +18,22 @@ on 2026-09-12. A live authenticated API check completed a real Dendrite task on
 the Mac's `qwen3-1.7b` model and returned the requested `EIF LOCAL OK` phrase
 (with the model's empty think wrapper). Both demo nodes were online after
 deployment. The final deployed runtime metadata correctly disables suggestions,
-client tools and interrupts for this completion-only integration.
+client tools and interrupts for this one-job-per-turn integration.
+On 2026-09-19, the assistant switched to structured chat on resident Helios
+runtimes; the scheduler now selects an online runtime that advertises chat support.
+For the three currently attached Helios models, a live check found that their
+chat endpoints can exhaust the output budget on hidden thinking. Dendrite's
+explicit setup probe now checks a resident model's visible response format and
+advertises it to Fabric; the admin console can request this through the Fabric
+API. The console uses the advertised format without a model-ID mapping. The
+probe and formatting do not reconfigure Helios or its tuned servers.
 
 Request path:
 
 ```text
 CopilotKit React console
   → POST /api/copilotkit (existing Fabric cookie/bearer authentication)
-  → one native Qwen completion task in the existing Fabric scheduler
+  → one Fabric task in the existing scheduler
   → Dendrite node executes its local model
   → owned job result → final AG-UI text event → console
 ```
@@ -39,16 +47,19 @@ transcription, memory, and cloud service endpoints are not exposed.
 
 Demo scope and limitations:
 
-- Each message is one self-contained completion. Previous messages, client
-  system instructions and client state are not sent to Dendrite.
-- Plain-text messages only, at most 12,000 characters, with a 384-output-token
-  bound. The scheduler chooses an eligible native Qwen completion model;
-  `qwen3-1.7b` is preferred when available. No mock/cloud fallback.
+- Each turn is one Fabric job. Up to 12 recent plain-text user/assistant
+  messages are included for follow-up context, capped at 48,000 UTF-8 bytes;
+  client system instructions, tools and client state are not forwarded.
+- Each new user message is limited to 12,000 characters. The runner allows up
+  to 1,024 output tokens and chooses an idle resident chat-capable Dendrite
+  runtime. If a job finishes with no visible answer, it tries one different idle
+  resident model. It does not replay uncertain failures. No mock/cloud fallback.
 - Assistant output is rendered as plain text, not remote Markdown images or
   model-generated HTML.
 - Responses arrive after inference completes; this is not token streaming.
-- Closing or stopping a response does not cancel the native job. There is no
-  conversation replay, persistent chat history or cross-request stop control.
+- Closing or stopping a response does not cancel the native job. The Worker
+  stores no conversation history, so reopening the console does not replay it;
+  there is no cross-request stop control or live web search.
 - A shared demo agent token shares its existing Fabric job visibility with
   everyone holding that token. Use distinct tokens for isolation.
 - Telemetry-off constants are compiled into both Vite and Worker builds.
@@ -66,7 +77,7 @@ Relevant code: `fabric/src/FabricCopilot.tsx`, `fabric/src/LocalCopilot.tsx`,
 `fabric/worker/copilot.ts`, and the `/api/copilotkit` gate in
 `fabric/worker/index.ts`.
 
-Verification: `fabric/tests/copilot.test.ts` checks compatible native model
+Verification: `fabric/tests/copilot.test.ts` checks compatible chat model
 selection, input bounds, final event handling, telemetry settings and zero
 outbound fetch calls. `fabric/scripts/auth-smoke.ts` exercises the real local
 Worker, role/origin restrictions, a synthetic node round trip, and cross-agent

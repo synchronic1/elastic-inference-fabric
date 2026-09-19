@@ -18,8 +18,8 @@ direct path is the fastest and least failure-prone option.
    on a hard-coded name:
 
    ```sh
-   bin/oxen models --search flash
-   bin/oxen schema claude-sonnet-4-6
+   bin/oxen models --search 'deepseek v4.1 flash'
+   bin/oxen schema deepseek-v4-1-flash
    ```
 
 The CLI refuses to run without a Keychain or environment credential, never
@@ -28,12 +28,20 @@ without sending it.
 
 ## Agent-ready commands
 
+Default to `deepseek-v4-1-flash` for ordinary development inference. Reserve
+OpenAI/Anthropic frontier models for a stated escalation or independent review
+reason, following `AGENTS.md`; do not run a frontier call after every ordinary
+task. The CLI still requires an explicit `--model`, so routing stays deliberate
+and there is no hidden retry/cascade. Model-specific reasoning controls are not
+interchangeable: inspect the selected model's schema rather than copying
+another provider's options.
+
 ```sh
 # Fast research, extraction, critique, or planning
-bin/oxen chat --model claude-sonnet-4-6 --prompt 'Return three crisp product risks.' --max-tokens 250
+bin/oxen chat --model deepseek-v4-1-flash --prompt 'Return three crisp product risks.' --max-tokens 1500
 
 # Ask for machine-readable output (where the selected model supports it)
-bin/oxen chat --model claude-sonnet-4-6 --prompt 'Return a JSON object with title and tagline.' --json-object
+bin/oxen chat --model deepseek-v4-1-flash --prompt 'Return a JSON object with title and tagline.' --json-object --max-tokens 1500
 
 # Make a visual asset synchronously (usually 5–30 seconds)
 bin/oxen image --model black-forest-labs-flux-2-klein-4b --prompt 'A friendly autonomous delivery robot, 16:9' --aspect-ratio 16:9
@@ -51,7 +59,7 @@ of secrets or data you are not authorized to send to Oxen.
 
 ```sh
 python3 -m unittest discover -s tests -v
-bin/oxen --dry-run chat --model claude-sonnet-4-6 --prompt 'ping'
+bin/oxen --dry-run chat --model deepseek-v4-1-flash --prompt 'ping' --max-tokens 1500
 ```
 
 Sources: [Inference overview](https://docs.oxen.ai/inference-api/overview),

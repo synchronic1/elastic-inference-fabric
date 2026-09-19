@@ -1,6 +1,7 @@
 """Native /completion adapter shared by IK_Llama and llama.cpp single-model servers."""
 
 import asyncio
+import os
 import shutil
 import socket
 import time
@@ -18,11 +19,30 @@ class LlamaRuntime(Runtime):
         super().__init__(config, node)
         self.process: asyncio.subprocess.Process | None = None
         self.url = (config.base_url or f"http://127.0.0.1:{config.port}").rstrip("/")
+        token = os.environ.get(config.api_token_env or "") if config.api_token_env else None
+        if config.api_token_env and not token:
+            raise ValueError(f"Set {config.api_token_env} before attaching to llama-server")
         self.client = httpx.AsyncClient(
-            base_url=self.url, trust_env=False, timeout=node.request_timeout_seconds
+            base_url=self.url,
+            headers={"Authorization": "Bearer " + token} if token else None,
+            trust_env=False,
+            follow_redirects=False,
+            timeout=node.request_timeout_seconds,
         )
         self.quarantined = False
         self.last_observed_at: float | None = None
+        self._supports_chat = False
+        self._chat_endpoint_unsupported = False
+        self._request_sent = False
+        self._known_rejection = False
+
+    @property
+    def supports_chat(self) -> bool:
+        return self._supports_chat
+
+    def reset(self):
+        super().reset()
+        self._supports_chat = False
 
     def native_alias(self, model: ModelConfig) -> str:
         return model.id + "@" + self.instance
@@ -60,6 +80,22 @@ class LlamaRuntime(Runtime):
         )
         if expected not in {item.get("id") for item in response.json().get("data", [])}:
             raise RuntimeFailure(f"Native runtime is not serving expected model {model.id}")
+        # /props is observational. A missing or ambiguous template must not make
+        # raw completion unavailable, but it cannot authorize structured chat.
+        self._supports_chat = False
+        if not self._chat_endpoint_unsupported:
+            try:
+                props_response = await self.client.get("/props", timeout=2)
+                if props_response.status_code == 200:
+                    props = props_response.json()
+                    self._supports_chat = (
+                        isinstance(props, dict)
+                        and props.get("model_alias") == expected
+                        and isinstance(props.get("chat_template"), str)
+                        and bool(props["chat_template"].strip())
+                    )
+            except (httpx.HTTPError, ValueError, TypeError):
+                pass
 
     async def ensure_loaded(self, model: ModelConfig):
         if self.quarantined:
@@ -73,8 +109,10 @@ class LlamaRuntime(Runtime):
                 raise RuntimeFailure(
                     "Attached runtime is unavailable or returned invalid metadata"
                 ) from exc
+            chat_ready = self._supports_chat
             if self.loaded_model != model:
                 self.reset()
+            self._supports_chat = chat_ready
             self.loaded_model = model
             self.fingerprint = "attached:" + model.upstream_model
             self.state = "ready"
@@ -139,24 +177,78 @@ class LlamaRuntime(Runtime):
         self.state = "ready"
 
     def validate_request(self, request: ExecuteRequest):
-        if request.max_tokens >= self.config.context_size:
+        if self.config.mode == "managed" and request.max_tokens >= self.config.context_size:
             raise RuntimeFailure("max_tokens must be smaller than runtime context_size", 422)
+        if request.messages is not None and not self.supports_chat:
+            raise RuntimeFailure("Native runtime has no verified chat template", 409)
 
-    async def generate(self, request: ExecuteRequest) -> dict:
+    async def generate(self, request: ExecuteRequest, execution_id: str | None = None) -> dict:
+        if self.loaded_model is None:
+            raise RuntimeFailure("Native model is not ready")
+        chat = request.messages is not None
+        expected = (
+            self.loaded_model.upstream_model
+            if self.config.mode == "attach"
+            else self.native_alias(self.loaded_model)
+        )
+        if chat:
+            body = {
+                "model": expected,
+                "messages": [message.model_dump() for message in request.messages or []],
+                "max_tokens": request.max_tokens,
+                "temperature": request.temperature,
+                "stream": False,
+            }
+        else:
+            body = {
+                "prompt": request.full_prompt,
+                "n_predict": request.max_tokens,
+                "temperature": request.temperature,
+                "stream": False,
+            }
+            if self.config.mode == "managed":
+                body.update({"cache_prompt": True, "id_slot": 0})
+        self._known_rejection = False
         try:
+            self._request_sent = True
             response = await self.client.post(
-                "/completion",
-                json={
-                    "prompt": request.full_prompt,
-                    "n_predict": request.max_tokens,
-                    "temperature": request.temperature,
-                    "cache_prompt": True,
-                    "id_slot": 0,
-                    "stream": False,
-                },
+                "/v1/chat/completions" if chat else "/completion", json=body
             )
+            if response.status_code in (400, 404, 405, 422, 429, 501):
+                self._known_rejection = True
+                if chat and response.status_code in (404, 405, 501):
+                    self._chat_endpoint_unsupported = True
             response.raise_for_status()
             result = response.json()
+            if chat:
+                if not isinstance(result, dict) or result.get("model") != expected:
+                    raise ValueError("Chat response has wrong model")
+                choices = result.get("choices")
+                if not isinstance(choices, list) or len(choices) != 1:
+                    raise ValueError("Invalid chat choices")
+                choice = choices[0]
+                if not isinstance(choice, dict) or choice.get("index") != 0:
+                    raise ValueError("Invalid chat choice")
+                message = choice.get("message")
+                content = message.get("content") if isinstance(message, dict) else None
+                if not isinstance(content, str) or len(content.encode("utf-8")) > 131072:
+                    raise ValueError("Invalid chat content")
+                finish_reason = choice.get("finish_reason")
+                if not isinstance(finish_reason, str):
+                    raise ValueError("Invalid chat finish reason")
+                usage = result.get("usage")
+                if usage is not None and not isinstance(usage, dict):
+                    raise ValueError("Invalid chat usage")
+                self._request_sent = False
+                return {
+                    "content": content,
+                    "cached_tokens": None,
+                    "truncated": finish_reason == "length",
+                    "usage": {
+                        "prompt_tokens": (usage or {}).get("prompt_tokens"),
+                        "completion_tokens": (usage or {}).get("completion_tokens"),
+                    },
+                }
             if not isinstance(result, dict) or not isinstance(result.get("content"), str):
                 raise ValueError("Missing completion text")
             timings = result.get("timings") or {}
@@ -167,6 +259,7 @@ class LlamaRuntime(Runtime):
             cached = timings.get("cache_n")
             if type(cached) is not int or cached < 0:
                 cached = None
+            self._request_sent = False
             return {
                 "content": result["content"],
                 "cached_tokens": cached,
@@ -208,8 +301,10 @@ class LlamaRuntime(Runtime):
             self.reset()
 
     async def abort(self):
-        if self.config.mode == "attach":
+        if self.config.mode == "attach" and self._request_sent and not self._known_rejection:
             self.quarantined = True
+        self._request_sent = False
+        self._known_rejection = False
         await self.stop()
 
     async def close(self):

@@ -94,6 +94,20 @@ def test_issue_persists_secret_but_only_prints_metadata():
     assert json.loads(output.getvalue())["access"]["id"] == "test-id"
 
 
+@pytest.mark.parametrize("no_expiry, expected", [(False, 30), (True, None)])
+def test_issue_token_non_expiry_is_explicit(no_expiry, expected):
+    args = argparse.Namespace(
+        name="demo", label="Demo", role="agent", days=30, no_expiry=no_expiry,
+        node_id=None, origin="https://fabric.test",
+    )
+    issued = {"token": "fat_" + "A" * 43, "access": {"id": "test-id"}}
+    with patch.object(fabric, "credential", return_value=None):
+        with patch.object(fabric, "api_request", return_value=issued) as api:
+            with patch.object(fabric, "store_credential"), redirect_stdout(io.StringIO()):
+                fabric.issue_token(args, "issuer-secret")
+    assert api.call_args.args[3]["expires_in_days"] == expected
+
+
 def test_failed_keychain_save_revokes_just_issued_token():
     args = argparse.Namespace(
         name="agent-test",

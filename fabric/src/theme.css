@@ -1,0 +1,102 @@
+:root { color-scheme: dark; }
+body { background: #071016; }
+.brand { gap: 12px; letter-spacing: 0; }
+.brand-mark { width: 38px; height: 38px; flex-shrink: 0; color: #a8c5db; }
+.brand-wordmark { display: grid; gap: 3px; line-height: 1.2; }
+.brand-wordmark strong { font-size: 15px; font-weight: 650; letter-spacing: -.015em; }
+.brand-wordmark small { color: #9eafb9; font-size: 12px; font-weight: 500; letter-spacing: .15em; }
+button.theme-toggle { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 8px 11px; border-color: #40545f; background: transparent; color: #cfdee5; font-size: 14px; font-weight: 500; }
+button.theme-toggle:hover { background: #172933; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid #72c4f2; outline-offset: 4px; }
+
+:root[data-theme="light"] { color-scheme: light; color: #1d2e3d; background: #f4f6f9; }
+[data-theme="light"] body { background: #f4f6f9; }
+[data-theme="light"] a { color: #175d8a; }
+[data-theme="light"] .brand { color: #172b3a; }
+[data-theme="light"] .brand-mark { color: #253f55; }
+[data-theme="light"] .brand-wordmark small { color: #556a79; }
+[data-theme="light"] .topbar { border-color: #cdd6de; }
+[data-theme="light"] .account-nav a { color: #284b65; border-color: #bacbd8; }
+[data-theme="light"] .account-nav a:first-child { color: #174e74; background: #e6eff6; border-color: #94afc4; }
+[data-theme="light"] button.theme-toggle { color: #284b65; border-color: #bacbd8; background: #fff; }
+[data-theme="light"] button.theme-toggle:hover { background: #e6eff6; }
+[data-theme="light"] a:focus-visible,
+[data-theme="light"] button:focus-visible,
+[data-theme="light"] summary:focus-visible { outline-color: #186797; }
+
+[data-theme="light"] :is(.auth-panel,.agent-panel,.metrics,.node-card,.model-card,.access-panel,.topology,.job-result) { background: #fff; border-color: #cad5df; }
+[data-theme="light"] :is(.hero h1,.section-head h2,.agent-panel h2,.auth-panel h2,.node-card h3,.model-card h3,.metrics strong,.topology-heading h2,.topology-node h3,.topology-demo-node h3,.access-heading h2,.access-steps h3,.mcp-guide h3,.admin-access h3,.token-list h3,.token-table b,.identity-grid b,.empty h3) { color: #172b3a; }
+[data-theme="light"] .eyebrow { color: #34627f; }
+[data-theme="light"] :is(.subtitle,.connection,.auth-panel p,.agent-copy p,.model-card p,.model-card small,.section-head h2 small,.node-heading p,.meter-row,.node-card footer,.node-details dt,.job-result dt,.job-title>span,.working,.metrics span,.metrics small,.metrics strong small,.topology-heading>p,.topology-host,.topology-node dt,.topology-provenance,.topology-legend,.topology-empty,.topology-demo-caption,.topology-demo-node>p:last-child,.access-muted,.identity-grid span,.access-policy,.access-steps p,.access-owner-help p,.token-table span,.mcp-guide p,.discovery) { color: #536978; }
+[data-theme="light"] :is(.node-details dd,.job-result dd,.meter-row b,.topology-node dd,.topology-origin b,.topology-router b) { color: #294355; }
+[data-theme="light"] :is(.auth-panel label,.task-form label,.token-form label) { color: #344f62; }
+[data-theme="light"] :is(input,select,textarea) { color: #1c3344; background: #fff; border-color: #a9bdcc; }
+[data-theme="light"] ::placeholder { color: #657b89; opacity: 1; }
+[data-theme="light"] :is(input,select,textarea):focus { border-color: #246c99; box-shadow: 0 0 0 3px #256b991a; }
+[data-theme="light"] button:not(.link-button) { color: #fff; border-color: #205e86; background: #205e86; }
+[data-theme="light"] button.theme-toggle { color: #284b65; border-color: #bacbd8; background: #fff; }
+[data-theme="light"] .link-button { color: #466072; border-color: #a3b5c3; }
+[data-theme="light"] .filters button { color: #38596f; border-color: #b7c9d6; background: transparent; }
+[data-theme="light"] .filters button.selected { color: #164f77; border-color: #82a8c2; background: #e6f0f8; }
+[data-theme="light"] :is(.copy,.template-button,.access-secondary,.revoke) { color: #235f84 !important; border-color: #8bacbf !important; background: transparent !important; }
+[data-theme="light"] .template-note { color: #536978 !important; }
+[data-theme="light"] :is(.template-note code,.discovery code,.mcp-guide code,.access-owner-help code,.access-owner-help summary) { color: #1c5c83; }
+[data-theme="light"] .tool-list { color: #536978 !important; }
+
+[data-theme="light"] :is(.notice,.session-banner) { color: #304d61; background: #edf3f8; border-color: #bed0de; }
+[data-theme="light"] :is(.notice.error,.job-result.failed,.job-result.expired) { background: #fff4f2; color: #963e34; border-color: #dcb0a9; }
+[data-theme="light"] .notice.error button { background: transparent; color: #963e34; border-color: #b46b62; }
+[data-theme="light"] :is(.auth-panel .sign-in-error,.sign-in-error,.access-error,.token-table .revoked) { color: #a33c31; }
+[data-theme="light"] :is(.metrics>div,.node-card footer,.job-result dl,.identity-grid,.admin-access,.token-table,.token-table article,.access-owner-help,.topology-models,.topology-legend,.topology-demo-caption) { border-color: #d4dee6; }
+[data-theme="light"] .empty { color: #536978; border-color: #a6bbc9; }
+[data-theme="light"] .job-result pre { color: #294355; border-color: #c8d7e2; background: #f1f5f8; }
+[data-theme="light"] .job-result .failure { color: #963e34; border-color: #dcb0a9; }
+[data-theme="light"] .bar { background: #e3ebf1; }
+[data-theme="light"] .bar i { background: #34759c; }
+[data-theme="light"] .bar.memory i { background: #6795ad; }
+[data-theme="light"] .metrics .warm strong { color: #885713; }
+[data-theme="light"] .spinner { border-color: #adbfcb; border-top-color: #246c99; }
+[data-theme="light"] .pulse.on { background: #227754; box-shadow: none; }
+
+[data-theme="light"] :is(.status.online,.status.succeeded,.model-state.running,.topology-model.resident) { color: #216348; background: #e5f3eb; border-color: #94baa4; }
+[data-theme="light"] :is(.status.stale,.status.running,.model-state.cached,.topology-model.cached) { color: #805211; background: #fff1d7; border-color: #cbb079; }
+[data-theme="light"] :is(.status.offline,.status.failed,.status.expired) { color: #993e36; background: #f9e7e3; }
+[data-theme="light"] :is(.model-state.not-provisioned,.model-state.sign-in-to-inspect,.topology-model.unprovisioned) { color: #4c6373; background: #eaf0f5; border-color: #bccbd6; }
+[data-theme="light"] .model-caps span { color: #2d5c79; border-color: #b6cbd9; }
+[data-theme="light"] .access-role { color: #2a526e; background: #e6eef5; }
+[data-theme="light"] .access-role.admin { color: #805211; background: #fff1d7; }
+[data-theme="light"] .mcp-guide { border-color: #c5d4df; background: #f1f5f8; }
+[data-theme="light"] .issued-token { border-color: #ccb17d; background: #fff7e6; }
+[data-theme="light"] .issued-token p { color: #78531c; }
+
+[data-theme="light"] :is(.topology-origin,.topology-router,.topology-demo-node) { background: #edf3f8; border-color: #a7bfce; }
+[data-theme="light"] .topology-node { background: #fff; border-color: #b5c9d6; }
+[data-theme="light"] .topology-icon { background: #dce8f1; color: #295d80; }
+[data-theme="light"] :is(.topology-origin small,.topology-router small) { color: #577283; }
+[data-theme="light"] :is(.topology-link,.topology-link.request-node,.topology-demo-pipeline b) { color: #326b90; }
+[data-theme="light"] .topology-link span { background: #fff; }
+[data-theme="light"] .topology-link:before { border-color: #6e9ab6; }
+[data-theme="light"] .topology-link:after { color: #326b90; }
+[data-theme="light"] .topology-link.heartbeat { color: #597685; }
+[data-theme="light"] .topology-node header>b { color: #216348; }
+[data-theme="light"] .topology-node-status { background: #2e7b58; box-shadow: none; }
+[data-theme="light"] .topology-node.stale { border-color: #c4a168; }
+[data-theme="light"] .topology-node.stale header>b { color: #805211; }
+[data-theme="light"] .topology-node.stale .topology-node-status { background: #a3792f; }
+[data-theme="light"] .topology-node.offline { opacity: 1; border-color: #d0aaa5; }
+[data-theme="light"] .topology-node.offline header>b { color: #993e36; }
+[data-theme="light"] .topology-node.offline .topology-node-status { background: #ac554d; }
+[data-theme="light"] .topology-demo-pipeline span { color: #34576d; background: #fff; border-color: #c0d2df; }
+[data-theme="light"] .topology-return-lane { color: #7e602a; }
+[data-theme="light"] .topology-return-lane:before { background: #ba9860; }
+[data-theme="light"] .topology-legend i { border-color: #427fa4; }
+[data-theme="light"] .topology-legend i.result { border-color: #a57a35; }
+[data-theme="light"] .topology-legend i.heartbeat { border-color: #829cab; }
+@media(max-width:920px) {
+  [data-theme="light"] .topology-link span { background: transparent; }
+}
+@media(max-width:450px) {
+  .brand-wordmark strong { font-size: 16px; }
+  .account-nav { flex-wrap: wrap; }
+  button.theme-toggle { min-height: 42px; }
+}

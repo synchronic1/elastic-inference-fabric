@@ -9,6 +9,10 @@ export interface RuntimeSnapshot {
   simulated: boolean; loaded_model: string | null; prefix_cache: PrefixCandidate[];
   runtime_instance: string; model_fingerprint: string | null;
   supports_model_switch: boolean; supports_cache_transfer: boolean;
+  supports_chat?: boolean;
+  chat_profile?: { status: 'verified' | 'unverified';
+    format: 'raw_chatml_no_think' | 'structured' | 'unverified';
+    model_id: string; upstream_instance_id: string; checked_at: number } | null;
 }
 export interface ModelSnapshot {
   id: string; runtime: string; capabilities: string[]; cached_on_disk: boolean;
@@ -33,6 +37,7 @@ export interface FabricNode {
 }
 export interface FabricState {
   schema_version: '1'; generated_at: number;
+  read_only?: boolean;
   summary: { online_nodes: number; total_nodes: number; logical_cpus: number;
     memory_total_bytes: number; memory_available_bytes: number; gpu_count: number;
     resident_models: number; available_models: number; prefix_candidates: number;
@@ -40,8 +45,9 @@ export interface FabricState {
   capabilities: { name: string; nodes: number; available_models: number; resident_models: number }[];
   nodes: FabricNode[]; jobs: FabricJob[];
 }
+export interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
 export interface TaskRequest {
-  capability: string; prompt: string; prefix?: string; model_id?: string;
+  capability: string; prompt?: string; prefix?: string; messages?: ChatMessage[]; model_id?: string;
   max_tokens?: number; temperature?: number; allow_simulated?: boolean;
 }
 export interface FabricJob {

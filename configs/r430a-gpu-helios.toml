@@ -1,0 +1,22 @@
+[node]
+id = "r430a-gpu-01"
+host = "127.0.0.1"
+port = 18090
+state_dir = "../.dendrite/r430a-gpu-01"
+fabric_url = "https://elasticinferencefabric.airanger.dev"
+fabric_token_env = "GANGLION_FABRIC_TOKEN"
+heartbeat_seconds = 10
+request_timeout_seconds = 150
+
+[[runtimes]]
+id = "bonsai-3060"
+kind = "helios"
+mode = "attach"
+base_url = "http://127.0.0.1:8471"
+api_token_env = "HELIOS_API_TOKEN"
+
+[[models]]
+id = "bonsai2-27b-r430a"
+runtime = "bonsai-3060"
+upstream_model = "bonsai2-27b-pq2_0"
+capabilities = ["complete"]

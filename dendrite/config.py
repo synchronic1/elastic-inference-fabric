@@ -24,11 +24,12 @@ class ModelConfig(StrictModel):
 
 class RuntimeConfig(StrictModel):
     id: str = Field(min_length=1)
-    kind: Literal["ik_llama", "llama_cpp", "mock"]
+    kind: Literal["ik_llama", "llama_cpp", "helios", "mock"]
     mode: Literal["managed", "attach"] = "managed"
     executable: str = "llama-server"
     port: int = Field(default=8081, ge=1, le=65535)
     base_url: str | None = None
+    api_token_env: str | None = None
     context_size: int = Field(default=4096, ge=128)
     threads: int = Field(default=4, ge=1)
     gpu_layers: int = Field(default=0, ge=0)
@@ -37,6 +38,13 @@ class RuntimeConfig(StrictModel):
 
     @model_validator(mode="after")
     def local_endpoint(self):
+        if self.kind == "helios":
+            if self.mode != "attach":
+                raise ValueError("Helios runtimes must attach to the owning service")
+            if not self.api_token_env:
+                raise ValueError("Helios runtimes need api_token_env")
+        elif self.api_token_env and self.mode != "attach":
+            raise ValueError("api_token_env is only used by attached runtimes")
         if self.mode == "attach":
             parsed = urlsplit(self.base_url or "")
             try:
@@ -58,6 +66,8 @@ class RuntimeConfig(StrictModel):
                 raise ValueError("Attached runtime must use an http:// loopback origin")
             if self.kind == "mock":
                 raise ValueError("Mock runtime does not attach to a real server")
+            if self.kind == "helios" and (parsed.hostname != "127.0.0.1" or not parsed.port):
+                raise ValueError("Helios attachment requires an explicit 127.0.0.1 port")
         elif self.base_url:
             raise ValueError("base_url is only used by attach mode")
         return self

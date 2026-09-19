@@ -44,19 +44,33 @@ export class AccessStore {
     private readonly bootstrapToken: string | null,
   ) {}
 
+  // The Durable Object calls this inside storage.transactionSync so schema
+  // upgrades either preserve every token/session or roll back in full.
   initialize(): void {
+    const existing = this.sql.exec<{ sql: string }>(
+      "SELECT sql FROM sqlite_master WHERE type='table' AND name='access_tokens'",
+    ).toArray()[0];
+    const needsViewerMigration = existing && !existing.sql.includes("'viewer'");
+    if (needsViewerMigration) this.sql.exec('ALTER TABLE access_tokens RENAME TO access_tokens_pre_viewer');
     this.sql.exec(`CREATE TABLE IF NOT EXISTS access_tokens (
       id TEXT PRIMARY KEY,
       secret_hash TEXT NOT NULL UNIQUE,
       token_prefix TEXT NOT NULL,
       label TEXT NOT NULL,
-      role TEXT NOT NULL CHECK(role IN ('admin', 'agent', 'node')),
+      role TEXT NOT NULL CHECK(role IN ('admin', 'agent', 'node', 'viewer')),
       node_id TEXT,
       created_at INTEGER NOT NULL,
       expires_at INTEGER,
       revoked_at INTEGER,
       last_used_at INTEGER
     )`);
+    if (needsViewerMigration) {
+      this.sql.exec(`INSERT INTO access_tokens (
+        id, secret_hash, token_prefix, label, role, node_id, created_at, expires_at, revoked_at, last_used_at
+      ) SELECT id, secret_hash, token_prefix, label, role, node_id, created_at, expires_at, revoked_at, last_used_at
+        FROM access_tokens_pre_viewer`);
+      this.sql.exec('DROP TABLE access_tokens_pre_viewer');
+    }
     this.sql.exec('CREATE INDEX IF NOT EXISTS access_tokens_active ON access_tokens(revoked_at, expires_at)');
     this.sql.exec(`CREATE TABLE IF NOT EXISTS access_sessions (
       session_hash TEXT PRIMARY KEY,
@@ -127,7 +141,7 @@ export class AccessStore {
     if (active >= MAX_ACTIVE_TOKENS) throw new AccessError('active token limit reached', 409);
 
     const id = crypto.randomUUID();
-    const expiresAt = now + input.expiresInDays * 24 * 60 * 60 * 1000;
+    const expiresAt = input.expiresInDays === null ? null : now + input.expiresInDays * 24 * 60 * 60 * 1000;
     // The caller can synchronously revalidate its admin principal after the
     // hashing await and immediately before this authority-creating write.
     authorize?.();
@@ -137,6 +151,29 @@ export class AccessStore {
     id, hash, token.slice(0, 12), input.label, input.role, input.nodeId, now, expiresAt);
     const row = this.sql.exec<AccessTokenRow>('SELECT * FROM access_tokens WHERE id=?', id).one();
     return { token, access: accessTokenFromRow(row) };
+  }
+
+  updateToken(id: string, raw: unknown): FabricAccessToken {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new AccessError('token update must be an object');
+    const value = raw as Record<string, unknown>;
+    const keys = Object.keys(value);
+    if (!keys.length || keys.some((key) => key !== 'role' && key !== 'expires_in_days')) {
+      throw new AccessError('provide only role and/or expires_in_days');
+    }
+    if ('role' in value && value.role !== 'agent' && value.role !== 'viewer') {
+      throw new AccessError('updated role must be agent or viewer');
+    }
+    const days = 'expires_in_days' in value ? validateExpiryDays(value.expires_in_days) : undefined;
+    if (!validUuid(id)) throw new AccessError('active token not found', 404);
+    const now = Date.now();
+    const row = this.sql.exec<AccessTokenRow>('SELECT * FROM access_tokens WHERE id=?', id).toArray()[0];
+    if (!row || !rowIsActive(row, now)) throw new AccessError('active token not found', 404);
+    if (row.role !== 'agent' && row.role !== 'viewer') throw new AccessError('only agent/viewer tokens can be updated', 403);
+    const role = value.role === undefined ? row.role : value.role as 'agent' | 'viewer';
+    const expiresAt = days === undefined ? row.expires_at : days === null ? null : now + days * 86_400_000;
+    // No awaits: the route's administrator recheck and this write are synchronous.
+    this.sql.exec('UPDATE access_tokens SET role=?, expires_at=? WHERE id=?', role, expiresAt, id);
+    return accessTokenFromRow(this.sql.exec<AccessTokenRow>('SELECT * FROM access_tokens WHERE id=?', id).one());
   }
 
   listTokens(): FabricAccessToken[] {
@@ -215,7 +252,7 @@ interface ValidatedCreateToken {
   label: string;
   role: FabricRole;
   nodeId: string | null;
-  expiresInDays: number;
+  expiresInDays: number | null;
 }
 
 function validateCreateToken(raw: unknown): ValidatedCreateToken {
@@ -231,7 +268,7 @@ function validateCreateToken(raw: unknown): ValidatedCreateToken {
     throw new AccessError('label must be 1 to 80 characters without control characters');
   }
   const role = value.role === undefined ? 'agent' : value.role;
-  if (role !== 'admin' && role !== 'agent' && role !== 'node') throw new AccessError('role must be admin, agent, or node');
+  if (role !== 'admin' && role !== 'agent' && role !== 'node' && role !== 'viewer') throw new AccessError('role must be admin, agent, node, or viewer');
   let nodeId: string | null = null;
   if (role === 'node') {
     if (!validNodeId(value.node_id)) throw new AccessError('node tokens require a valid node_id');
@@ -239,11 +276,16 @@ function validateCreateToken(raw: unknown): ValidatedCreateToken {
   } else if (value.node_id !== undefined) {
     throw new AccessError('only node tokens may bind node_id');
   }
-  const expiresInDays = value.expires_in_days === undefined ? DEFAULT_EXPIRY_DAYS : value.expires_in_days;
-  if (!Number.isInteger(expiresInDays) || typeof expiresInDays !== 'number' || expiresInDays < 1 || expiresInDays > MAX_EXPIRY_DAYS) {
-    throw new AccessError(`expires_in_days must be an integer from 1 to ${MAX_EXPIRY_DAYS}`);
-  }
+  const expiresInDays = validateExpiryDays(value.expires_in_days === undefined ? DEFAULT_EXPIRY_DAYS : value.expires_in_days);
   return { label, role, nodeId, expiresInDays };
+}
+
+function validateExpiryDays(value: unknown): number | null {
+  if (value === null) return null;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1 || value > MAX_EXPIRY_DAYS) {
+    throw new AccessError(`expires_in_days must be null (no expiry) or an integer from 1 to ${MAX_EXPIRY_DAYS}`);
+  }
+  return value;
 }
 
 function bootstrapPrincipal(): FabricPrincipal {

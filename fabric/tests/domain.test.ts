@@ -65,6 +65,22 @@ describe('task admission', () => {
     assert.equal(request.prompt, '<|im_start|>user\nこんにちは\t🌊\n<|im_end|>');
     assert.equal(request.prefix, 'system\r\nline 2');
   });
+
+  it('accepts bounded chat messages and rejects ambiguous or malformed input', () => {
+    const messages = [{ role: 'user', content: 'What is 2+2?' }];
+    assert.deepEqual(parseTaskRequest({ capability: 'complete', messages }), { capability: 'complete', messages });
+    for (const invalid of [
+      { capability: 'complete' },
+      { capability: 'complete', prompt: 'raw', messages },
+      { capability: 'complete', messages, prefix: '' },
+      { capability: 'complete', messages: [] },
+      { capability: 'complete', messages: [{ role: 'tool', content: 'x' }] },
+      { capability: 'complete', messages: [{ role: 'user', content: 'x', name: 'injected' }] },
+      { capability: 'complete', messages: [{ role: 'user', content: 'x' }, { role: 'system', content: 'late' }] },
+      { capability: 'complete', messages: [{ role: 'assistant', content: 'not a user turn' }] },
+      { capability: 'complete', messages: [{ role: 'user', content: 'é'.repeat(40_000) }] },
+    ]) assert.throws(() => parseTaskRequest(invalid), InputError);
+  });
 });
 
 describe('node snapshot sanitation', () => {
@@ -80,6 +96,22 @@ describe('node snapshot sanitation', () => {
     assert.equal('advertise_url' in clean, false);
     assert.equal('discovered_gguf' in clean, false);
     assert.equal('heartbeat' in clean, false);
+    assert.equal(clean.runtimes[0].supports_chat, false);
+    const chat = sanitizeNodeSnapshot({
+      ...snapshot(), runtimes: [{ ...snapshot().runtimes[0], supports_chat: true,
+        chat_profile: { status: 'verified', format: 'raw_chatml_no_think',
+          model_id: 'test-model', upstream_instance_id: 'hot-1', checked_at: 1_700_000_001,
+          secret_local_path: '/private/ignored' } }],
+    }, 'node-a');
+    assert.equal(chat.runtimes[0].supports_chat, true);
+    assert.equal(chat.runtimes[0].chat_profile?.format, 'raw_chatml_no_think');
+    assert.equal('secret_local_path' in (chat.runtimes[0].chat_profile ?? {}), false);
+    assert.throws(() => sanitizeNodeSnapshot({
+      ...snapshot(), runtimes: [{ ...snapshot().runtimes[0], chat_profile: {
+        status: 'verified', format: 'unknown', model_id: 'test-model',
+        upstream_instance_id: 'hot-1', checked_at: 1,
+      } }],
+    }, 'node-a'), /Unknown runtime chat profile format/);
   });
 
   it('rejects a heartbeat that claims another node identity', () => {
@@ -162,6 +194,19 @@ describe('placement policy', () => {
     const now = 1_700_000_000_000;
     const advisoryBusy = snapshot({ active_requests: 99 });
     assert.equal(placementCandidates([node('node-a', advisoryBusy, now)], { capability: 'complete', prompt: 'x' }, null, 0, new Set(), now).length, 1);
+  });
+
+  it('places chat only on a runtime that advertises support while raw remains compatible', () => {
+    const now = 1_700_000_000_000;
+    const legacy = node('legacy', snapshot(), now);
+    const chat = node('chat', snapshot({
+      node_id: 'chat',
+      runtimes: [{ ...snapshot().runtimes[0], supports_chat: true }],
+    }), now);
+    const request = parseTaskRequest({ capability: 'complete', messages: [{ role: 'user', content: 'hello' }] });
+    assert.deepEqual(placementCandidates([legacy, chat], request, null, 0, new Set(), now).map((candidate) => candidate.node_id), ['chat']);
+    assert.deepEqual(placementCandidates([legacy], request, null, 0, new Set(), now), []);
+    assert.equal(placementCandidates([legacy], { capability: 'complete', prompt: 'raw' }, null, 0, new Set(), now).length, 1);
   });
 });
 

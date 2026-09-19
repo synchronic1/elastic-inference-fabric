@@ -100,6 +100,10 @@ def create_app(config: Config) -> FastAPI:
     async def execute(request: ExecuteRequest):
         return await app.state.node.execute(request)
 
+    @app.post("/v1/chat-probe", dependencies=protected)
+    async def chat_probe():
+        return {"profiles": await app.state.node.probe_chat_profiles()}
+
     @app.post("/v1/models/load", dependencies=protected)
     async def load(request: LoadRequest):
         return await app.state.node.load(request.model_id)

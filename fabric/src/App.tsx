@@ -13,8 +13,15 @@ import type {
   TaskRequest,
 } from "./contracts";
 import { PRIMARY_MODELS } from "./model-catalog";
-import AccessPanel from "./AccessPanel";
+import AccessPanel, { AccessIntroduction } from "./AccessPanel";
 import FabricTopology from "./FabricTopology";
+import BenchDiagram from "./bench/BenchDiagram";
+import WorkloadAccess from "./WorkloadAccess";
+import ThemeToggle from "./ThemeToggle";
+import FabricMark from "./FabricMark";
+import NodeIdentity from "./NodeIdentity";
+import FabricCopilot from "./FabricCopilot";
+import AmbiguousPanel from "./AmbiguousPanel";
 
 type RequestState = "loading" | "ready" | "error" | "auth";
 const API = "/api/fabric";
@@ -84,7 +91,7 @@ function NodeCard({ node }: { node: FabricNode }) {
     <article className="node-card">
       <div className="node-heading">
         <div>
-          <h3>{node.node_id}</h3>
+          <h3><NodeIdentity nodeId={node.node_id} /></h3>
           <p>
             {s.hardware.hostname} · {s.hardware.os}/{s.hardware.arch}
           </p>
@@ -158,26 +165,35 @@ export default function App() {
   const [filter, setFilter] = useState("all");
   const [token, setToken] = useState("");
   const [tokenBusy, setTokenBusy] = useState(false);
+  const [authError, setAuthError] = useState("");
   const [task, setTask] = useState({
+    mode: "chat" as "chat" | "raw",
     capability: "",
     prompt: "",
     prefix: "",
     model_id: "",
+    max_tokens: "512",
   });
   const [job, setJob] = useState<FabricJob | null>(null);
   const [taskBusy, setTaskBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  // The bench reads rates, heartbeats and ages against a clock rather than the
+  // wall, and the clock only advances on a successful read: an interrupted poll
+  // must not age a snapshot the fabric never sent.
+  const [now, setNow] = useState(() => Date.now());
   const timer = useRef<number | null>(null);
 
   const refresh = useCallback(async () => {
     try {
       const next = await api<FabricState>(API);
       setFabric(next);
+      setNow(Date.now());
       setState("ready");
       setMessage(`Updated ${new Date(next.generated_at).toLocaleTimeString()}`);
     } catch (error) {
       if ((error as { status?: number }).status === 401) {
         setFabric(null);
+        setJob(null);
         setState("auth");
         setMessage("A fabric access token is required.");
       } else {
@@ -198,7 +214,7 @@ export default function App() {
     };
   }, [refresh]);
   useEffect(() => {
-    if (!job || !["running"].includes(job.status)) return;
+    if (fabric?.read_only || !job || !["running"].includes(job.status)) return;
     const id = window.setInterval(async () => {
       try {
         setJob(await api<FabricJob>(`/v1/tasks/${job.id}`));
@@ -207,7 +223,7 @@ export default function App() {
       }
     }, 1500);
     return () => window.clearInterval(id);
-  }, [job?.id, job?.status]);
+  }, [job?.id, job?.status, fabric?.read_only]);
 
   const capabilities = fabric?.capabilities ?? [];
   const nodes = useMemo(
@@ -260,36 +276,48 @@ export default function App() {
     event.preventDefault();
     if (!token.trim()) return;
     setTokenBusy(true);
+    setAuthError("");
     try {
       await api("/api/session", {
         method: "POST",
-        body: JSON.stringify({ token }),
+        body: JSON.stringify({ token: token.trim() }),
       });
       setToken("");
       await refresh();
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : "Login failed");
+      setAuthError(e instanceof Error ? e.message : "Sign-in failed");
     } finally {
       setTokenBusy(false);
     }
   }
   async function logout() {
-    await fetch("/api/session", { method: "DELETE", credentials: "include" });
-    setFabric(null);
-    setState("auth");
-    setMessage("Signed out of the fabric control plane.");
+    try {
+      const response = await fetch("/api/session", { method: "DELETE", credentials: "include" });
+      if (!response.ok && response.status !== 401) throw new Error("Sign-out failed. Please retry.");
+      setFabric(null);
+      setJob(null);
+      setAuthError("");
+      setState("auth");
+      setMessage("Signed out of the fabric control plane.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Sign-out failed");
+    }
   }
   async function submitTask(event: FormEvent) {
     event.preventDefault();
-    if (!task.capability || !task.prompt.trim()) return;
+    const maxTokens = Number(task.max_tokens);
+    if (fabric?.read_only || !task.capability || !task.prompt.trim()
+      || !Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 4096) return;
     setTaskBusy(true);
     setJob(null);
     try {
       const body: TaskRequest = {
         capability: task.capability,
-        prompt: task.prompt,
-        ...(task.prefix ? { prefix: task.prefix } : {}),
+        ...(task.mode === "chat"
+          ? { messages: [{ role: "user" as const, content: task.prompt }] }
+          : { prompt: task.prompt, ...(task.prefix ? { prefix: task.prefix } : {}) }),
         ...(task.model_id ? { model_id: task.model_id } : {}),
+        max_tokens: maxTokens,
       };
       setJob(
         await api<FabricJob>("/v1/tasks", {
@@ -317,22 +345,30 @@ export default function App() {
     `curl -X POST ${window.location.origin}/v1/tasks \\`,
     '  -H "Authorization: Bearer $FABRIC_TOKEN" \\',
     "  -H 'Content-Type: application/json' \\",
-    `  -d '{"capability":"${task.capability || "complete"}","prompt":"Hello fabric"}'`,
+    `  -d '${JSON.stringify(task.mode === "chat"
+      ? { capability: task.capability || "complete", messages: [{ role: "user", content: "Hello fabric" }] }
+      : { capability: task.capability || "complete", prompt: "Hello fabric" })}'`,
   ].join("\n");
 
   return (
     <main>
       <header className="topbar">
-        <a className="brand" href="/">
-          <span className="mark">G</span>
-          <span>
-            GANGLION <b>FABRIC</b>
+        <a className="brand" href="/" aria-label="Elastic Inference Fabric home">
+          <FabricMark />
+          <span className="brand-wordmark">
+            <strong>Elastic Inference</strong>
+            <small>FABRIC</small>
           </span>
         </a>
+        <nav className="account-nav" aria-label="Fabric account">
+          <a href="#fabric-access">{fabric ? "Your session" : "Sign in"}</a>
+          <a href="#access-tokens">Access tokens</a>
+          <ThemeToggle />
+        </nav>
         <div className="connection" aria-live="polite">
           <span className={`pulse ${state === "ready" ? "on" : ""}`} />
           {state === "ready" ? `Live · ${message}` : message}
-          {state === "ready" && (
+          {fabric && (
             <button className="link-button" onClick={logout}>
               Sign out
             </button>
@@ -349,38 +385,45 @@ export default function App() {
           </p>
         </div>
         <div className="public-links">
+          <a href="#flow">Flow diagram</a>
+          <a href="#ambiguous">Ambiguous coworker</a>
           <a href="/.well-known/agent.json">Agent manifest</a>
           <a href="/llms.txt">LLM guide</a>
           <a href="/openapi.json">OpenAPI</a>
         </div>
       </section>
-      {state === "auth" && (
-        <section className="auth-panel">
+      <div id="fabric-access">
+      {!fabric ? (
+        <section className="auth-panel" aria-labelledby="sign-in-heading">
           <div>
-            <p className="eyebrow">AUTHENTICATION REQUIRED</p>
-            <h2>Connect to your fabric</h2>
+            <p className="eyebrow">FABRIC AUTHENTICATION</p>
+            <h2 id="sign-in-heading">Sign in to Fabric</h2>
             <p>
-              Enter a control-plane token to establish a secure session cookie.
-              The token is not stored in this browser.
+              Use your viewer, agent, or administrator access token. Sign-in creates an
+              HttpOnly session cookie; the raw token is not saved in browser storage.
             </p>
+            <p><a href="#access-tokens">Need a token? See access-token setup ↓</a></p>
           </div>
-          <form onSubmit={login}>
-            <label>
-              Fabric token
+          <form onSubmit={login} aria-label="Sign in to Fabric">
+            <label htmlFor="fabric-token">
+              Fabric access token
               <input
+                id="fabric-token"
                 type="password"
                 value={token}
                 onChange={(e) => setToken(e.target.value)}
                 autoComplete="current-password"
+                aria-describedby={authError ? "sign-in-error" : undefined}
                 required
               />
             </label>
             <button disabled={tokenBusy}>
-              {tokenBusy ? "Connecting…" : "Connect"}
+              {tokenBusy ? "Signing in…" : "Sign in"}
             </button>
+            {authError && <p id="sign-in-error" className="sign-in-error" role="alert">{authError}</p>}
           </form>
         </section>
-      )}
+      ) : <section className="session-banner" aria-label="Current session"><span>{fabric.read_only ? "Live demo · read-only viewer" : "Signed in to Fabric"}</span><a href="#access-tokens">View identity &amp; access →</a></section>}
       {state === "error" && (
         <section className="notice error" role="alert">
           <span>Control-plane connection failed: {message}</span>
@@ -392,6 +435,18 @@ export default function App() {
           <span className="spinner" /> Loading fabric inventory…
         </section>
       )}
+      </div>
+      <FabricTopology
+        fabric={fabric}
+        live={state === "ready"}
+        activeNodeId={job?.status === "running" ? job.node_id : undefined}
+      />
+      <BenchDiagram fabric={fabric} now={now} live={state === "ready"} />
+      {fabric && !fabric.read_only && <FabricCopilot />}
+      <AmbiguousPanel key={fabric ? "signed-in" : "public"} signedIn={Boolean(fabric)} jobs={fabric?.jobs ?? []} />
+      <div id="access-tokens">
+        {fabric ? <AccessPanel /> : <AccessIntroduction />}
+      </div>
       <section className="model-roster" aria-labelledby="roster-heading">
         <div className="section-head">
           <div>
@@ -465,8 +520,6 @@ export default function App() {
               <small>local runtime only</small>
             </div>
           </section>
-          <FabricTopology fabric={fabric} activeNodeId={job?.status === "running" ? job.node_id : undefined} />
-          <AccessPanel />
           <section className="section-head">
             <div>
               <p className="eyebrow">NODE INVENTORY</p>
@@ -507,13 +560,15 @@ export default function App() {
               <p>Change the filter or wait for a capable node heartbeat.</p>
             </section>
           )}
+          <WorkloadAccess readOnly={fabric.read_only === true}>
           <section className="agent-panel">
             <div className="agent-copy">
               <p className="eyebrow">AGENT-NATIVE DROP POINT</p>
               <h2>Dispatch a capability task</h2>
               <p>
-                Requests pass through the cloud control plane; execution and
-                inference remain local to the selected node.
+                Each submission is an independent inference task, not a conversation.
+                The model has no live web search. Requests pass through the cloud
+                control plane; inference runs on the selected node.
               </p>
               <label className="discovery">
                 Discovery URL{" "}
@@ -531,20 +586,22 @@ export default function App() {
                 {copied ? "Copied curl" : "Copy curl example"}
               </button>
               <p className="template-note">
-                This endpoint sends raw <code>prefix + prompt</code>; it does
-                not add a chat template.
+                Chat messages use the selected node’s model template. Raw mode
+                sends exact <code>prefix + prompt</code> bytes for advanced clients.
               </p>
               <button
                 type="button"
                 className="template-button"
                 onClick={() =>
                   setTask({
+                    mode: "raw",
                     capability: "complete",
                     model_id: "qwen3-1.7b",
                     prefix:
                       "<|im_start|>system\nYou are a concise local assistant. /no_think\n<|im_end|>\n<|im_start|>user\n",
                     prompt:
                       "Explain fabric routing in one sentence.\n<|im_end|>\n<|im_start|>assistant\n",
+                    max_tokens: "512",
                   })
                 }
               >
@@ -552,6 +609,16 @@ export default function App() {
               </button>
             </div>
             <form className="task-form" onSubmit={submitTask}>
+              <label>
+                Input mode
+                <select
+                  value={task.mode}
+                  onChange={(e) => setTask({ ...task, mode: e.target.value as "chat" | "raw" })}
+                >
+                  <option value="chat">One-shot chat task · model formats message</option>
+                  <option value="raw">Raw completion · exact prompt bytes</option>
+                </select>
+              </label>
               <label>
                 Capability
                 <select
@@ -570,7 +637,7 @@ export default function App() {
                 </select>
               </label>
               <label>
-                Prompt
+                {task.mode === "chat" ? "Task instruction" : "Raw prompt"}
                 <textarea
                   value={task.prompt}
                   onChange={(e) => setTask({ ...task, prompt: e.target.value })}
@@ -580,6 +647,17 @@ export default function App() {
               </label>
               <div className="form-row">
                 <label>
+                  Output token limit
+                  <input
+                    type="number"
+                    min="1"
+                    max="4096"
+                    value={task.max_tokens}
+                    onChange={(e) => setTask({ ...task, max_tokens: e.target.value })}
+                    required
+                  />
+                </label>
+                {task.mode === "raw" && <label>
                   Prefix{" "}
                   <input
                     value={task.prefix}
@@ -588,7 +666,7 @@ export default function App() {
                     }
                     placeholder="Optional reusable context"
                   />
-                </label>
+                </label>}
                 <label>
                   Model ID{" "}
                   <input
@@ -638,9 +716,12 @@ export default function App() {
                 </p>
               )}
               {job.error && <pre className="failure">{job.error}</pre>}
-              {job.result && <pre>{resultText(job.result)}</pre>}
+              {job.result && (resultText(job.result).trim()
+                ? <pre>{resultText(job.result)}</pre>
+                : !job.error && <p className="failure">The model returned no visible answer. Try a higher output token limit or another model.</p>)}
             </section>
           )}
+          </WorkloadAccess>
         </>
       )}
     </main>

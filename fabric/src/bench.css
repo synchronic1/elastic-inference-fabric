@@ -1,0 +1,219 @@
+/* Throughput bench — the measurement canvas below the topology.
+   Geometry contract, mirrored from src/bench/core.ts:
+     1008 x 240 lane box, three reading columns at lane-local x 12 / 282 / 816
+     (256 / 520 / 180 with 14px gaps inside a 984px band), so the 520px ruler
+     on the axis node (LANE_X + 282) lines up with every lane's plot track.
+   The intake column hangs INTAKE_W + GUTTER_W (186px) to the LEFT of the lane
+   box, and the gutter is the wiring channel that carries the three link rails.
+   Change those numbers in core.ts and here together. */
+
+.bench { margin: 38px 0; border: 1px solid #294650; border-radius: 6px; background: linear-gradient(135deg, #0b1b22, #091419); padding: 21px; overflow: hidden; }
+.bench-heading { display: flex; justify-content: space-between; gap: 16px; align-items: end; }
+.bench-heading h2 { margin: 0; color: #eaf7f9; font-size: 21px; }
+.bench-heading > p { margin: 0; color: #879fa6; font-size: 11px; line-height: 1.5; max-width: 320px; text-align: right; }
+
+.bench-canvas { position: relative; margin-top: 22px; height: 240px; border: 1px solid #20363e; border-radius: 5px; background: #08141a; overflow: hidden; }
+.bench-canvas-empty { display: grid; place-items: center; height: auto; min-height: 200px; padding: 28px; }
+.bench-caption { margin: 13px 0 0; color: #a7bbc1; font-size: 11px; line-height: 1.6; max-width: 96ch; }
+
+/* ── React Flow shell ─────────────────────────────────────────────────────
+   The bench supplies every mark itself, so React Flow's defaults are all
+   switched off here rather than inherited from the shared theme. */
+.bench .react-flow { background: transparent; }
+.bench .react-flow__node { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; text-align: left; }
+.bench .react-flow__node, .bench .react-flow__edge { cursor: default; }
+.bench .react-flow__edge-path { fill: none; }
+.bench .bench-edge-heartbeat { stroke: #55747c; stroke-width: 1.2; stroke-dasharray: 4 5; }
+.bench .bench-edge-request { stroke: #3c8491; stroke-width: 1.6; }
+.bench .bench-edge-result { stroke: #d49d51; stroke-width: 1.6; }
+.bench .bench-edge-return { stroke: #b98442; stroke-width: 1.2; stroke-dasharray: 7 5; }
+.bench .react-flow__edge-textbg, .bench .react-flow__edge-text { display: none; }
+
+/* Handles are not drawn: they exist so every link has a real attachment point,
+   and the Left-position offset below is what puts each link on its own rail.
+   getSmoothStepPath drops a link's vertical run relative to its SOURCE handle,
+   so each rail comes from the edge's origin, not its endpoint. Measured
+   against the rendered paths, a source handle sitting OUTSIDE its node's left
+   edge lands its rail at (LANE_X + offset + 1) — one flow pixel per CSS pixel,
+   which is why the offsets below are the rails minus 197:
+     heartbeat  group-heartbeat (-33) -> rail 164
+     request    lane-request    (-21) -> rail 176
+     result     group-result    (-11) -> rail 186
+   Every source is outside its node (negative offset) because a handle INSIDE
+   the node breaks that one-to-one mapping. The three rails then sit 10-12px
+   apart inside the 152..198 gutter, and the lane-side handles sit near the
+   lane's own left edge, so each link leaves its rail as a short horizontal
+   stub into the lane — a three-port cluster per lane. */
+.bench .bench-handle { width: 2px; height: 2px; min-width: 0; min-height: 0; border: 0; border-radius: 0; background: transparent; opacity: 0; pointer-events: none; }
+.bench .react-flow__handle[data-handleid='lane-heartbeat'] { left: -4px; top: 22%; }
+.bench .react-flow__handle[data-handleid='lane-request'] { left: -21px; top: 50%; }
+.bench .react-flow__handle[data-handleid='lane-result'] { left: -4px; top: 78%; }
+.bench .react-flow__handle[data-handleid='lane-return'] { right: -4px; top: 50%; }
+.bench .react-flow__handle[data-handleid='group-heartbeat'] { left: -33px; top: 5px; }
+.bench .react-flow__handle[data-handleid='group-request'] { left: -4px; top: 17px; }
+.bench .react-flow__handle[data-handleid='group-result'] { left: -11px; top: 29px; }
+.bench .react-flow__handle[data-handleid='group-return'] { right: -4px; top: 17px; }
+
+/* Motion paths: a particle rides the edge's own geometry, so it can never
+   travel in a straight line past a corner. Browsers without offset-path, and
+   readers who asked for less motion, simply get no particles — the in-flight
+   count is printed in the lane either way. */
+.bench-particle { display: none; }
+@media (prefers-reduced-motion: no-preference) {
+  @supports (offset-path: path('M 0 0 L 1 1')) {
+    .bench-particle { display: block; animation: bench-travel 2.4s linear infinite; }
+    .bench-particle.bench-edge-request { fill: #69e5ed; }
+    .bench-particle.bench-edge-result { fill: #f0bd6c; }
+  }
+}
+@keyframes bench-travel { from { offset-distance: 0%; } to { offset-distance: 100%; } }
+
+.bench .bench-frame { pointer-events: none; }
+/* React Flow sizes its wrapper, not the custom body. Absolute children and
+   percentage-positioned handles need this real containing box. */
+.bench-axis, .bench-group, .bench-lane, .bench-frame, .bench-note-row, .bench-demo { width: 100%; height: 100%; box-sizing: border-box; }
+
+/* ── Axis and column rules ───────────────────────────────────────────────── */
+.bench-axis { position: relative; }
+.bench-axis-caption { position: absolute; top: 0; left: 0; color: #78949b; font-size: 9px; letter-spacing: .07em; }
+.bench-axis-rule { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; border-top: 1px solid #3c8491; }
+.bench-tick { position: absolute; top: 0; display: flex; flex-direction: column; align-items: center; transform: translateX(-50%); }
+.bench-tick i { display: block; width: 1px; height: 6px; background: #3c8491; }
+.bench-tick small { color: #78949b; font-size: 8px; margin-top: 1px; white-space: nowrap; }
+
+.bench-group { position: relative; }
+.bench-group-column { position: absolute; top: 0; color: #718c94; font-size: 8px; letter-spacing: .1em; }
+.bench-group-honesty { position: absolute; left: 12px; right: 12px; bottom: 0; color: #78949b; font-size: 9px; }
+
+/* ── Lane ────────────────────────────────────────────────────────────────── */
+.bench-lane { position: relative; border: 1px solid #31525b; border-radius: 4px; background: #0a161b; }
+.bench-lane.stale { border-color: #665137; }
+.bench-lane.offline { border-color: #573b3e; }
+.bench-lane.has-work .bench-intake p { color: #69e5ed; }
+@media (prefers-reduced-motion: no-preference) {
+  .bench-lane.has-work { animation: bench-work 2.6s ease-in-out infinite; }
+}
+@keyframes bench-work { 50% { border-color: #54b8c5; box-shadow: 0 0 0 2px #56cdda1a; } }
+
+.bench-intake { position: absolute; left: -186px; top: 0; width: 140px; height: 100%; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; padding-right: 8px; border-right: 1px solid #20363e; text-align: right; }
+.bench-intake h3 { margin: 0; color: #e4f2f4; font-size: 12px; line-height: 1.25; overflow-wrap: anywhere; }
+.bench-intake p { margin: 0; color: #a7bbc1; font-size: 10px; }
+
+.bench-drain { display: inline-flex; gap: 2px; }
+.bench-drain i { display: block; width: 9px; height: 6px; border-radius: 1px; background: #1a3037; }
+.bench-drain.eligible i.on { background: #7cedc9; }
+.bench-drain.expired i.on { background: #ffaaa4; }
+
+/* Keep metadata in normal flow so wrapping cannot overlap the next band.
+   Rare oversized inventories remain keyboard-/wheel-scrollable inside the
+   lane; its intake and wiring handles stay outside this scrolling surface.
+   1px border + 11px padding keeps the ruler aligned at lane-local x=12. */
+.bench-lane-content { width: 100%; height: 100%; box-sizing: border-box; padding: 19px 11px 12px; overflow: auto; scrollbar-width: thin; scrollbar-color: #3c8491 #0a161b; }
+.bench-lane-content:focus-visible { outline: 2px solid #85e6f4; outline-offset: -3px; }
+.bench-measure { width: 984px; min-height: 88px; display: grid; grid-template-columns: 256px 520px 180px; align-items: start; gap: 14px; }
+
+.bench-compute { display: grid; align-content: start; gap: 0; }
+/* The value column is a fixed width so the three tracks share one left edge and
+   their bars stay comparable; it is sized to hold the longest thing a bar can
+   say, which is "Not measured" — the one label that must never be clipped. */
+.bench-micro { display: grid; grid-template-columns: 34px 72px 1fr; align-items: center; gap: 6px; height: 19px; }
+.bench-micro[data-unified] { height: 30px; }
+.bench-micro-name { color: #718c94; font-size: 8px; letter-spacing: .08em; }
+.bench-micro-value { color: #c0d4d8; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bench-micro-track { position: relative; height: 5px; border-radius: 3px; background: #1a3037; overflow: hidden; }
+.bench-micro-fill { display: block; height: 100%; border-radius: 1px; }
+.bench-micro[data-bar='CPU'] .bench-micro-fill { background: #5bd9e6; }
+.bench-micro[data-bar='LOAD'] .bench-micro-fill { background: #85e6f4; }
+.bench-micro[data-bar='MEM'] .bench-micro-fill { background: #79bad9; }
+.bench-bracket { grid-column: 2 / -1; color: #78949b; font-size: 8px; }
+
+.bench-plot { display: grid; grid-template-rows: 30px auto; gap: 0; }
+.bench-plot-track { position: relative; height: 30px; }
+.bench-gridline { position: absolute; top: 4px; width: 1px; height: 22px; background: #1a3037; }
+.bench-plot-fill { position: absolute; left: 0; top: 8px; height: 14px; border-radius: 0 4px 4px 0; background: #5bd9e6; }
+.bench-plot-fill.stale { background: #e9ae5b; }
+.bench-plot-cap { position: absolute; right: 0; top: -3px; width: 2px; height: 20px; background: #85e6f4; }
+.bench-plot-empty { position: absolute; left: 0; top: 8px; width: 100%; height: 14px; border-radius: 0 4px 4px 0; }
+.bench-plot-word { position: absolute; left: 8px; top: 11px; color: #a7bbc1; font-size: 9px; letter-spacing: .06em; }
+.bench-rate { min-width: 0; }
+.bench-rate b { display: block; color: #f0f8fa; font-size: 12px; line-height: 13px; }
+.bench-rate small { display: block; color: #8fa7ad; font-size: 9px; line-height: 12px; overflow-wrap: anywhere; }
+.bench-rate small.bench-provenance { color: #78949b; font-size: 8px; }
+
+.bench-accel { display: grid; align-content: start; gap: 6px; min-width: 0; }
+.bench-accel-item { min-width: 0; }
+.bench-accel-item b { display: block; color: #c0d4d8; font-size: 10px; line-height: 13px; overflow-wrap: anywhere; }
+.bench-accel-item small { display: block; color: #8fa7ad; font-size: 8px; line-height: 10px; overflow-wrap: anywhere; }
+.bench-accel-item small.unified { color: #85e6f4; }
+
+/* Both hatched marks mean the same thing: a value the fabric did not report,
+   which is not the same fact as a measured zero. */
+.bench-hatch { display: block; background-image: repeating-linear-gradient(45deg, #26434c 0 2px, transparent 2px 5px); }
+.bench-swatch { width: 24px; height: 10px; margin: 3px 0; border: 1px solid #2c4d57; border-radius: 2px; }
+
+.bench-models { margin-top: 12px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 6px 4px; }
+.bench-models > span { max-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+.bench .topology-model em { font-style: normal; opacity: .78; margin-left: 3px; }
+.bench-runtime { font-size: 9px; padding: 3px 5px; border: 1px solid #2c4d57; border-radius: 2px; background: #0d2128; color: #9fb6bc; white-space: nowrap; }
+.bench-runtime.busy { border-color: #3baab8; color: #94eef5; }
+.bench-simulated { font-style: normal; color: #ffca7b; margin-left: 4px; }
+.bench-empty { color: #88a2a9; font-size: 9px; line-height: 16px; }
+
+.bench-footer { margin-top: 12px; display: flex; flex-wrap: wrap; align-content: flex-start; gap: 4px 12px; color: #78949b; font-size: 9px; line-height: 12px; overflow-wrap: anywhere; }
+.bench-footer > .bench-provenance { flex-basis: 100%; }
+.bench-provenance { color: #78949b; font-size: 9px; }
+
+/* ── Unplaced jobs and the empty / demo notes ────────────────────────────── */
+.bench-note-row { position: relative; border: 1px dashed #3b7380; border-radius: 4px; background: #0e252d; padding: 9px 12px; overflow: auto; }
+.bench-note-row h3 { margin: 0 0 6px; color: #e4f2f4; font-size: 11px; }
+.bench-note-row ul { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.bench-note-row li { display: flex; align-items: center; gap: 6px; color: #c0d4d8; font-size: 9px; }
+
+.bench-note { border: 1px dashed #3b7380; border-radius: 4px; background: #0e252d; padding: 20px; }
+.bench-note p { margin: 0; color: #abc5cb; font-size: 12px; line-height: 1.5; }
+.bench-note p + p { margin-top: 7px; }
+.bench-demo h3 { margin: 0 0 8px; color: #e4f2f4; font-size: 17px; }
+.bench-demo .eyebrow { margin: 0 0 6px; }
+
+/* ── Table view ──────────────────────────────────────────────────────────── */
+.bench-ledger { margin-top: 15px; border-top: 1px solid #20363e; padding-top: 12px; }
+.bench-ledger > summary { cursor: pointer; color: #8eeaf2; font-size: 12px; }
+.bench-ledger > summary:hover { color: #b7f3f8; }
+.bench-table-wrap { margin-top: 12px; overflow-x: auto; }
+.bench-ledger table { border-collapse: collapse; width: 100%; min-width: 920px; font-size: 11px; }
+.bench-ledger caption { caption-side: top; text-align: left; color: #78949b; font-size: 10px; line-height: 1.6; padding: 0 0 10px; }
+.bench-ledger th, .bench-ledger td { border-bottom: 1px solid #20363e; padding: 7px 10px; text-align: left; vertical-align: top; color: #c0d4d8; }
+.bench-ledger thead th { color: #718c94; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.bench-ledger tbody th { color: #e4f2f4; white-space: nowrap; }
+.bench-ledger td small { color: #78949b; font-size: 10px; }
+
+/* ── Narrow ──────────────────────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .bench-canvas { display: none; }
+  .bench-ledger > summary { display: none; }
+  /* A closed <details> hides its children through the UA stylesheet. At this
+     width the table is the only view of the bench, so it has to show whether
+     or not anyone opened it — hence the deliberate !important. */
+  .bench-ledger > .bench-table-wrap { display: block !important; }
+}
+
+@media (max-width: 560px) {
+  .bench { padding: 16px; }
+  .bench-heading { display: block; }
+  .bench-heading > p { margin-top: 7px; max-width: none; text-align: left; }
+}
+
+/* The bench is a dark instrument panel in either theme. theme.css repaints a
+   few shared classes for light mode, and those chips are opaque enough that
+   inside this panel they read as light-theme widgets pasted onto a dark
+   instrument. Re-asserting the base values here (the same ones styles.css and
+   topology.css give these classes in the dark theme) keeps every chip a part
+   of the panel it sits in. Backgrounds are re-stated with their dark-theme
+   alpha rather than a fresh alpha, so the tints match the rest of the bench. */
+[data-theme='light'] .bench .eyebrow { color: #68d7e4; }
+[data-theme='light'] .bench :is(.status.online, .status.succeeded) { color: #7cedc9; background: #16705b29; border-color: transparent; }
+[data-theme='light'] .bench :is(.status.stale, .status.running) { color: #ffca7b; background: #7b4e192b; border-color: transparent; }
+[data-theme='light'] .bench :is(.status.offline, .status.failed, .status.expired) { color: #ffaaa4; background: #7c2f2b2b; border-color: transparent; }
+[data-theme='light'] .bench .topology-model.resident { color: #7ee6c4; background: #165e512d; border-color: #287762; }
+[data-theme='light'] .bench .topology-model.cached { color: #f5c57b; background: #70491f2b; border-color: #76552e; }
+[data-theme='light'] .bench .topology-model.unprovisioned { color: #9fb6bc; background: #293d43; border-color: #405960; }

@@ -4,12 +4,17 @@ This implements the first component of the supplied Ganglion scope:
 `HACKATHON_SUBMISSION_DESCRIPTION_AND_SCOPE.md`. Dendrite performs execution;
 the [Cloudflare fabric](fabric.md) now supplies the cluster registry and placement.
 
+For Ubuntu VMs, see [remote Linux node setup](remote-linux-node.md): node-bound
+credentials, outbound connectivity, ports 18090/18091, and a pinned CPU runtime
+build with a small official GGUF model.
+
 ## Runtime contract
 
 `dendrite/runtimes/base.py` owns admission, deadline, state transitions, and cache
 metadata. Adapters implement `ensure_loaded`, `generate`, and `stop`:
 
 - `ik_llama` / `llama_cpp`: managed native server, or explicitly attached server.
+- `helios`: authenticated loopback attachment to a Helios-owned hot model and queue.
 - `mock`: deterministic simulation for demonstrating the API without model weights.
 
 Managed mode starts `llama-server` with an operator-configured GGUF, loopback
@@ -19,16 +24,29 @@ A unique alias ties that readiness check to the launched runtime instance.
 Switching stops only the child owned by that adapter, then loads the next model.
 Shutdown drains the bounded execution lane before stopping owned processes.
 
-Native inference uses `/completion` with `cache_prompt=true`, `id_slot=0`, and
-`stream=false`. Input is **exactly `prefix + prompt`**: the API doesn't silently
-insert a chat template. Streaming, embeddings, tools, and multimodal execution
-are not part of this initial node interface.
+Managed native llama inference uses `/completion` with `cache_prompt=true`,
+`id_slot=0`, and `stream=false`. Attached raw inference leaves slot selection and
+cache policy to the existing server. Raw input is **exactly `prefix + prompt`**:
+this path never silently inserts a chat template. Helios and attached llama.cpp
+runtimes can also accept structured text-only `messages` through their existing
+`/v1/chat/completions` endpoints. For direct llama attachments, Dendrite first
+checks `/props` without generating tokens and advertises chat only if the
+reported model alias matches and the server reports a nonempty chat template.
+An absent or mismatched template leaves raw completion available. The two input
+forms are exclusive.
+Streaming, embeddings, tools, and multimodal execution are not part of this
+node interface. See [the GPU deployment](helios-dendrite.md).
 
 Attached mode verifies the exact `upstream_model` against `/v1/models` before
 inference and refreshes discovery before node snapshots and heartbeats. It does
 not advertise reusable cache, because other clients may overwrite it. Following
 an uncertain inference failure/cancellation, attachment is quarantined: recover
 the upstream server and restart Dendrite. It never kills the attached process.
+If `/v1/chat/completions` is absent despite `/props`, chat is disabled until
+Dendrite restarts; raw attachment remains available. An optional
+`api_token_env` supplies a loopback server's bearer token without storing it in TOML.
+Attached servers enforce their own context limit; Dendrite's managed
+`context_size` setting does not override an already tuned upstream server.
 
 ## Prefix-cache semantics
 
@@ -63,6 +81,47 @@ blobs. Additional discovery scans only the first level of configured model
 directories, up to 256 entries, at startup. It does not scan the network or infer
 capabilities from filenames. Runtimes/models have separate installed, cached,
 available, and resident state.
+
+## Node onboarding probe
+
+`dendrite probe` reports what is already running on a machine's loopback ports and
+prints a configuration block to paste. It is read-only: it writes no config, starts
+nothing, and never adopts an engine, so a probe result cannot become a routing target
+by itself. Only loopback is scanned, because `RuntimeConfig.local_endpoint` rejects any
+attached origin that is not an http:// loopback address.
+
+Default ports are 8080, 8081, 8000, 1234, 11434, 8090, 18090, 18091, and each finding is
+classified:
+
+| Result | Meaning |
+| --- | --- |
+| `attach-ready` | llama.cpp-family server whose `/completion` accepted the contract |
+| `llama-family` | contract not verified; attaching is a guess until `--check-completion` |
+| `dendrite-managed-runtime` | a managed runtime owned by another Dendrite; do not attach |
+| `dendrite-node` | a Dendrite API is already listening on this port |
+| `ollama` | Ollama; it can supply GGUF blobs as files, it cannot be attached |
+| `openai-compatible` | `/v1/models` without the llama.cpp contract; cannot be attached |
+| `listening-unrecognized` | an open port with no known node API |
+
+The `/completion` check is opt-in, because a completion request can reset the slot prefix
+cache of a server other clients share. It sends an empty prompt with `n_predict=0`, so it
+verifies the contract without generating tokens. A missing `timings.cache_n` is reported
+as a caveat rather than treated as failure: cached-token counts stay `null` on such builds.
+
+A model identifier carrying `@` is a managed alias (`<id>@<instance>`). When every
+advertised model looks like that, the port belongs to another Dendrite's managed runtime.
+Attaching there would contend with the owner, which terminates that process on model switch
+or unload, so the probe reports the finding and does not suggest an attach config.
+
+When a managed runtime is listening but no Dendrite API answered, the probe warns that the
+parent may have exited and left it orphaned. The orphan keeps its port and its loaded model,
+and a later managed start on that port fails with `Managed port <n> is already in use`.
+
+`--json` emits the same findings with a `schema_version`, a top-level `actionable` flag, the
+warnings, each candidate's `supports_chat` observation, and the suggested TOML, for
+scripting across a fleet. Chat discovery uses only GET `/props`; it does not send a
+completion request. The exit status is 0 when the
+node is actionable (an attachable server, or a runtime binary plus weights) and 1 otherwise.
 
 ## LAN and control-plane integration
 

@@ -15,7 +15,7 @@ class MockRuntime(Runtime):
             self.fingerprint = self.model_fingerprint(model)
         self.state = "ready"
 
-    async def generate(self, request: ExecuteRequest) -> dict:
+    async def generate(self, request: ExecuteRequest, execution_id: str | None = None) -> dict:
         await asyncio.sleep(self.config.mock_delay_seconds)
         return {
             "content": f"[SIMULATED {self.loaded_model.id}] {request.prompt}",

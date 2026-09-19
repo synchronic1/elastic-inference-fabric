@@ -64,6 +64,7 @@ def cloud_snapshot(node: Node) -> dict:
 async def serve_connection(node: Node, ws):
     active: dict[str, asyncio.Task] = {}
     completed: set[str] = set()
+    probe_task: asyncio.Task | None = None
 
     async def send(payload: dict):
         await ws.send(json.dumps(payload))
@@ -78,7 +79,7 @@ async def serve_connection(node: Node, ws):
         job_id = message["job_id"]
         try:
             request = ExecuteRequest.model_validate(message.get("request"))
-            result = await node.execute(request)
+            result = await node.execute(request, execution_id=job_id)
             await send({"type": "result", "job_id": job_id, "result": result.model_dump()})
         except ValidationError:
             await send(
@@ -116,12 +117,22 @@ async def serve_connection(node: Node, ws):
             completed.add(job_id)
 
     async def receive():
+        nonlocal probe_task
         async for raw in ws:
             try:
                 message = json.loads(raw)
             except (ValueError, TypeError):
                 continue
-            if not isinstance(message, dict) or message.get("type") != "execute":
+            if not isinstance(message, dict):
+                continue
+            if message.get("type") == "probe_chat":
+                if probe_task is None or probe_task.done():
+                    async def run_probe():
+                        await node.probe_chat_profiles()
+                        await send({"type": "heartbeat", "snapshot": cloud_snapshot(node)})
+                    probe_task = asyncio.create_task(run_probe())
+                continue
+            if message.get("type") != "execute":
                 continue
             job_id = message.get("job_id")
             if not isinstance(job_id, str) or not 1 <= len(job_id) <= 128:
@@ -152,6 +163,8 @@ async def serve_connection(node: Node, ws):
             task.result()
     finally:
         tasks = [heartbeat, receiver, *active.values()]
+        if probe_task is not None:
+            tasks.append(probe_task)
         for task in tasks:
             task.cancel()
         # Cancelling runtime execution clears its slot and stops only owned native processes.

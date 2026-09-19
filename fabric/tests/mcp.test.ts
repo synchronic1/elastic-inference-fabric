@@ -31,10 +31,18 @@ test('official MCP client initializes, discovers tools/resources and submits wit
     assert.ok(JSON.stringify(identity).includes('Test agent'));
     const job = await client.callTool({ name: 'fabric_submit_task', arguments: { capability: 'complete', prompt: 'Hello\nworld' } });
     assert.equal((job.structuredContent as Record<string, unknown> | undefined)?.id, jobId);
+    const chat = await client.callTool({ name: 'fabric_submit_task', arguments: {
+      capability: 'complete', messages: [{ role: 'user', content: 'What is 2+2?' }],
+    } });
+    assert.equal((chat.structuredContent as Record<string, unknown> | undefined)?.id, jobId);
     const missing = await client.callTool({ name: 'fabric_get_task', arguments: { job_id: jobId } });
     assert.equal(missing.isError, true);
     const invalid = await client.callTool({ name: 'fabric_submit_task', arguments: { capability: 'complete', prompt: 'x', command: 'not permitted' } });
     assert.equal(invalid.isError, true);
+    const ambiguous = await client.callTool({ name: 'fabric_submit_task', arguments: {
+      capability: 'complete', prompt: 'raw', messages: [{ role: 'user', content: 'chat' }],
+    } });
+    assert.equal(ambiguous.isError, true);
   } finally {
     await client.close();
   }

@@ -2,6 +2,7 @@ import type {
   FabricJob,
   FabricNode,
   FabricState,
+  ChatMessage,
   ModelSnapshot,
   NodeSnapshot,
   PrefixCandidate,
@@ -113,15 +114,41 @@ export function validJobId(value: unknown): value is string {
 
 export function parseTaskRequest(raw: unknown): TaskRequest {
   const value = object(raw, 'request');
-  const allowed = new Set(['capability', 'prompt', 'prefix', 'model_id', 'max_tokens', 'temperature', 'allow_simulated']);
+  const allowed = new Set(['capability', 'prompt', 'prefix', 'messages', 'model_id', 'max_tokens', 'temperature', 'allow_simulated']);
   for (const key of Object.keys(value)) {
     if (!allowed.has(key)) throw new InputError(`unknown request field: ${key}`);
   }
+  const rawPrompt = value.prompt !== undefined;
+  const chatMessages = value.messages !== undefined;
+  if (rawPrompt === chatMessages) throw new InputError('provide exactly one of prompt or messages');
   const request: TaskRequest = {
     capability: string(value.capability, 'capability', 128),
-    prompt: promptText(value.prompt, 'prompt', LIMITS.promptCharacters),
   };
-  if (value.prefix !== undefined) request.prefix = promptText(value.prefix, 'prefix', LIMITS.prefixCharacters, true);
+  if (rawPrompt) {
+    request.prompt = promptText(value.prompt, 'prompt', LIMITS.promptCharacters);
+    if (value.prefix !== undefined) request.prefix = promptText(value.prefix, 'prefix', LIMITS.prefixCharacters, true);
+  } else {
+    if (value.prefix !== undefined) throw new InputError('prefix is only valid with a raw prompt');
+    const messages = array(value.messages, 'messages', 32);
+    if (!messages.length) throw new InputError('messages must contain at least one entry');
+    let contentBytes = 0;
+    request.messages = messages.map((rawMessage, index): ChatMessage => {
+      const message = object(rawMessage, 'message');
+      if (Object.keys(message).some((key) => key !== 'role' && key !== 'content')) {
+        throw new InputError('message accepts only role and content');
+      }
+      const role = message.role;
+      if (role !== 'system' && role !== 'user' && role !== 'assistant') {
+        throw new InputError('message role must be system, user, or assistant');
+      }
+      if (role === 'system' && index !== 0) throw new InputError('system message must be first');
+      const content = promptText(message.content, 'message content', LIMITS.promptCharacters);
+      contentBytes += new TextEncoder().encode(content).byteLength;
+      if (contentBytes > LIMITS.promptCharacters) throw new InputError('combined chat content exceeds 65536 bytes');
+      return { role, content };
+    });
+    if (request.messages.at(-1)?.role !== 'user') throw new InputError('last chat message must be user');
+  }
   if (value.model_id !== undefined) request.model_id = string(value.model_id, 'model_id', 256);
   if (value.max_tokens !== undefined) {
     const amount = number(value.max_tokens, 'max_tokens', 1, 4096);
@@ -153,6 +180,16 @@ function sanitizePrefix(raw: unknown): PrefixCandidate {
 
 function sanitizeRuntime(raw: unknown): RuntimeSnapshot {
   const value = object(raw, 'runtime');
+  const profile = value.chat_profile === undefined || value.chat_profile === null
+    ? null : object(value.chat_profile, 'runtime.chat_profile');
+  const profileFormat = profile && string(profile.format, 'runtime.chat_profile.format', 32);
+  const profileStatus = profile && string(profile.status, 'runtime.chat_profile.status', 16);
+  if (profileFormat && !['raw_chatml_no_think', 'structured', 'unverified'].includes(profileFormat)) {
+    throw new InputError('Unknown runtime chat profile format');
+  }
+  if (profileStatus && !['verified', 'unverified'].includes(profileStatus)) {
+    throw new InputError('Unknown runtime chat profile status');
+  }
   return {
     id: string(value.id, 'runtime.id', 256),
     kind: string(value.kind, 'runtime.kind', 64),
@@ -166,6 +203,14 @@ function sanitizeRuntime(raw: unknown): RuntimeSnapshot {
     model_fingerprint: value.model_fingerprint === null ? null : string(value.model_fingerprint, 'runtime.model_fingerprint', 512),
     supports_model_switch: boolean(value.supports_model_switch, 'runtime.supports_model_switch'),
     supports_cache_transfer: boolean(value.supports_cache_transfer, 'runtime.supports_cache_transfer'),
+    supports_chat: value.supports_chat === undefined ? false : boolean(value.supports_chat, 'runtime.supports_chat'),
+    chat_profile: profile ? {
+      status: profileStatus as 'verified' | 'unverified',
+      format: profileFormat as 'raw_chatml_no_think' | 'structured' | 'unverified',
+      model_id: string(profile.model_id, 'runtime.chat_profile.model_id', 256),
+      upstream_instance_id: string(profile.upstream_instance_id, 'runtime.chat_profile.upstream_instance_id', 256),
+      checked_at: number(profile.checked_at, 'runtime.chat_profile.checked_at'),
+    } : null,
   };
 }
 
@@ -348,6 +393,7 @@ export function placementCandidates(
       if (request.model_id !== undefined && request.model_id !== model.id) continue;
       const runtime = node.snapshot.runtimes.find((item) => item.id === model.runtime);
       if (!runtime || runtime.busy || !['ready', 'unloaded'].includes(runtime.state)) continue;
+      if (request.messages && runtime.supports_chat !== true) continue;
       if (runtime.loaded_model !== model.id && !runtime.supports_model_switch) continue;
       const simulated = runtime.simulated || model.simulated;
       if (simulated && request.allow_simulated !== true) continue;

@@ -1,0 +1,8 @@
+.node-identity { display: inline-flex; flex-direction: column; gap: 4px; max-width: 100%; white-space: normal; overflow-wrap: anywhere; line-height: 1.3; }
+.node-identity .node-display-name { font-weight: 700; }
+.node-identity .node-sublabel { display: block; color: #91dce6; font-size: 12px; font-weight: 500; letter-spacing: .02em; }
+.node-identity .node-canonical-id { display: block; color: #93aeb6; font-size: 11px; font-weight: 400; }
+[data-theme='light'] .node-identity .node-sublabel { color: #14647a; }
+[data-theme='light'] .node-identity .node-canonical-id { color: #526777; }
+[data-theme='light'] .bench .node-identity .node-sublabel { color: #91dce6; }
+[data-theme='light'] .bench .node-identity .node-canonical-id { color: #93aeb6; }
