@@ -154,7 +154,7 @@ deploy_api() {
     else
       unmounted+=("$rel")
     fi
-  done < <(find "$PLANE_APP/overlays" -name '*.py' -not -path '*__pycache__*' | sort)
+  done < <(find "$PLANE_APP/overlays" -name '*.py' -not -path '*__pycache__*' -not -path '*/overlays/pylibs/*' | sort)
 
   # Files that are NOT bind-mounted live only in the container's writable layer.
   # Copy them so the change takes effect now, but say so loudly: a container
@@ -205,7 +205,7 @@ check() {
       echo "  DRIFT: $rel"
       drift=$((drift + 1))
     fi
-  done < <(find "$PLANE_APP/overlays" -name '*.py' -not -path '*__pycache__*' | sort)
+  done < <(find "$PLANE_APP/overlays" -name '*.py' -not -path '*__pycache__*' -not -path '*/overlays/pylibs/*' | sort)
   [ "$drift" -eq 0 ] && echo "  none — container matches the repo"
 
   echo
@@ -215,7 +215,7 @@ check() {
   echo
   echo "── other containers that may have diverged ──"
   local w b
-  for rel in $(find "$PLANE_APP/overlays" -name '*.py' -not -path '*__pycache__*' -printf '%P\n' | sort); do
+  for rel in $(find "$PLANE_APP/overlays" -name '*.py' -not -path '*__pycache__*' -not -path '*/overlays/pylibs/*' -printf '%P\n' | sort); do
     w=$(docker exec "$WORKER_CONTAINER" md5sum "/code/$rel" 2>/dev/null | awk '{print $1}' || true)
     b=$(docker exec "$BEAT_CONTAINER" md5sum "/code/$rel" 2>/dev/null | awk '{print $1}' || true)
     [ -n "$b" ] && [ -n "$w" ] && [ "$b" != "$w" ] && echo "  $rel differs between worker and beat-worker"

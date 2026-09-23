@@ -119,6 +119,12 @@ now distinguishes the two cases and warns loudly about the unmounted one.
 
 `plane-deploy.sh` parses the override to build this mapping. Do not hand-roll it.
 
+**Third-party Python libs.** The stock image lacks e.g. a PDF library and there is no image
+build, so pure-Python packages live in the gitignored host dir `overlays/pylibs/`, bind-mounted
+at `/opt/pylibs` with `PYTHONPATH=/opt/pylibs` on the `api_common` anchor (currently `pypdf`).
+`overlays/pylibs.requirements.txt` says how to rebuild it; adding a mount/env needs a compose
+**recreate**, not a restart. Details in the box RUNBOOK.
+
 Also: `web`'s nginx reads **`/etc/nginx/nginx.conf`** (server on :3000). The
 vestigial `/etc/nginx/conf.d/default.conf` on :80 is not loaded — editing it does nothing.
 
@@ -284,6 +290,14 @@ docker exec -i plane-app-api-1 python3 manage.py shell -c \
 for a in FileAsset.objects.order_by('created_at'):
     print(a.created_at, a.entity_type, a.attributes.get('name'))"
 ```
+
+**Email-inbox attachment previews (2026-09-23).** Attachments in the inbox previously carried only
+extracted text (PDF extraction was a naive scanner that returned nothing for compressed PDFs, and
+the bytes were never served). Now `pypdf` extracts real text, and `email-feed/attachment/`
+(`attachment_views.py`) streams the actual attachment — located by Message-ID, type-whitelisted with
+magic-byte checks, `nosniff`, CSP-sandboxed except PDFs — so the inbox previews images, PDFs, audio,
+video and CSVs in place. Chrome refuses its PDF viewer in *any* sandboxed iframe, so PDFs use
+`<object>`. Not covered: HTML email bodies, HEIC, legacy .doc/.xls, OCR. See the box RUNBOOK.
 
 Attachments in Plane live in **`FileAsset`** (v1.3.1 has no separate
 `IssueAttachment` model); issues attach as rows with

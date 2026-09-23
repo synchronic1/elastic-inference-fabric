@@ -39,6 +39,19 @@ this one explains what to build on it.
 > `9ad482b36`/`ebc3c53ed`). Phase 5 (webhooks) is not built — the forecast
 > question in §4 still gates whether the rest is worth it.
 >
+> **Extended again 2026-09-23 (evening):** a **Vendors** tab (suppliers/partners, the counterpart of
+> accounts) and a Contacts tab that now **aggregates people from both accounts and vendors**
+> (`CrmContact.vendor_id`; chips, All/Accounts/Vendors/Unlinked filter, search). Contacts carry the
+> fields a CRM expects — mobile, department, LinkedIn/X/Facebook/Instagram/website links, city,
+> country, tags, lead source, last-contacted date, notes — driven by one list
+> (`CONTACT_FIELD_LIMITS` in `plane/crm/common.py`) so create, PATCH, import and serialization can't
+> drift. **Import CSV** is on Contacts, Accounts and Vendors (quoted cells supported; `account_name` /
+> `vendor_name` columns create companies on first mention; sparse re-imports never blank data).
+> The **agent API** (`bot_api/crm_views.py`, declared in `bot_api/crm_docs.py` and merged into
+> `BotRootView` so `GET /api/bot/v1/` lists everything) now covers accounts, vendors, contacts
+> (+detail, +import) and opportunities (+stage PATCH) beside quick-add — thin wrappers over the same
+> functions the UI calls. Backend `436d85a`, frontend `41ee9010f`.
+>
 > **Fixed 2026-09-23, same day:** every primary button (`New account`, `New
 > prospect`, etc.) was invisible — white text on a fully transparent background —
 > because the UI used `bg-accent-strong`, a class this design system does not
