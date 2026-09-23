@@ -406,6 +406,26 @@ Not verified against a real second mailbox (no credentials to hand) — the merg
 logic was tested with mocked IMAP and the UI with a deliberately unreachable
 mailbox. Details: box `RUNBOOK.md`, "Email inbox: multiple mailboxes".
 
+## 10b. AI analysis revisions and per-item review — BUILT 2026-09-23
+
+Every AI run on an email thread is retained as a revision (`email_analysis_revision`,
+unmanaged table, `email_feed/revisions.py`), so the analysis survives a reload and
+nothing a reviewer decided is lost. Next steps and deliverables are reviewable items:
+approve, decline (with a reason) or comment. **Refine** sends those verdicts to the
+model: approved items are locked and merged back verbatim by the server (asking the
+model to reproduce them invites rewording), declined ones are never re-proposed,
+commented ones are revised. **Commit** files only approved items and writes a Review
+block onto the Plane thread comment (approved / declined / not reviewed, plus earlier
+decisions from ancestor revisions), and records what was filed on the revision.
+Revisions inherit mailbox visibility. In the UI only the newest revision (and the newest
+committed record) is expanded; older ones are collapsed rows.
+
+Gaps: the background ingest analysis (`EmailIngest.analysis`) is not a revision, and a
+comment on an item the model then rewrites is matched by position and text. The next
+planned step, deliberately separate, is a workspace "strategy and rules" note fed by
+repeated decline reasons. Details: box `RUNBOOK.md`; smoke test
+`email_feed/tests/smoke_revisions.py`.
+
 ## 11. Standing constraints that apply to this work
 
 - `plane-app/plane.env` holds secrets and is gitignored — **never commit or print it**.
