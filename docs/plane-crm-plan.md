@@ -58,11 +58,13 @@ is a non-negative integer, so neither is a credible currency slot.
 
 → **Deal amount / close date / probability cannot live on an Issue.** New tables are required.
 
-> Relevant: Plane *does* ship a real CRM (**Customers** — customer records, customer
-> requests linked to work items). It is **Business-plan / Commercial-Edition only**, and
-> Plane's own editions doc says each edition is a distinct codebase with no CE upgrade
-> path to it. It also has **no amount, probability, close date or forecast** in its API —
-> it is a customer-request object, not a deal pipeline. Not a shortcut.
+> Relevant: Plane *does* ship a real CRM-ish object (**Customers**). It is
+> **Business-plan / Commercial-Edition only**. The `Customer` object itself carries
+> `stage`, `contract_status`, `domain`, `employees`, `revenue` — closer to a deal
+> record than first assumed — but still has **no amount, probability, close date or
+> forecast** field, and **no webhook events** for it at all. See §3.5 for the full
+> researched breakdown, including why the Commercial-Edition codebase split makes it
+> a poor fit here regardless.
 
 ### 3.2 Migrations are a trap, not a difficulty
 
@@ -101,6 +103,47 @@ mirror** of the box, not a push source — the box's branch is checked out with
 → A frontend change is authored **on the box**, committed there, shipped by `deploy web`.
 There is no "edit on the Mac, push to the box" workflow.
 
+### 3.5 Plane's own paid Customers feature, researched (2026-09-22)
+
+Verified against `developers.plane.so` — the Customer API, the live webhook event
+list, and the edition/upgrade docs — rather than assumed from the marketing page.
+
+**The `Customer` object** (`POST /api/v1/workspaces/{slug}/customers/`): `name`,
+`email`, `website_url`, `domain`, `employees`, `revenue`, `stage`, `contract_status`,
+plus logo/audit fields. `stage` and `contract_status` are free-text strings, not a
+managed enum — firmographic data with a loose pipeline label, not a modeled funnel.
+
+**`CustomerProperty`** is a genuine custom-field system — but scoped to Customer
+records only, not Issues: `TEXT | DATETIME | DECIMAL | BOOLEAN | OPTION |
+RELATION(ISSUE|USER) | URL | EMAIL | FILE`. A `DECIMAL` property could carry deal
+value, `DATETIME` a close date, `OPTION` a real stage enum, `RELATION→ISSUE` a link
+back to work items — i.e. everything Phase 2's `crm_opportunity` sketch needs to
+hand-build. `CustomerRequest` is a separate, third object (`work_item_ids` array),
+closer to a linked feature/support request than a deal.
+
+**No CRM webhook events exist, on any plan.** The full v2 event list is `project.*`,
+`cycle.*`, `module.*`, `milestone.*`, `page.*`, `workitem.*` and their sub-entities —
+nothing for `customer.*`. Paying for Customers does not buy an event hook; it is
+REST-poll only, same as the overlay approach in §5 Phase 2.
+
+**Why this doesn't change the recommendation.** Self-hosted access to Customers
+needs **Commercial Edition**, and Plane's own docs are explicit that editions "are
+separate codebases, not feature toggles on the same binary." The documented
+upgrade path (Community → Commercial) is a Postgres/MinIO/Redis backup-restore onto
+a *new* Commercial deployment — it says nothing about custom code, and given the
+codebase split there is no reason to expect the bind-mount overlay mechanism
+(`&api_common`, `/code/plane/...`) or the extension points `email_feed`, `bot_api`
+and `store` depend on would survive. Migrating risks having to re-port the actual
+hard-won asset here — the 2,018-row, months-running, AI-analyzed email pipeline
+(§2) — onto an unfamiliar closed-source target, to buy fields that still need the
+same custom-property build-out Option B already scopes for free.
+
+**Net:** treat the `Customer`/`CustomerProperty` schema above as a **design
+reference** for Phase 2's `crm_account`/`crm_opportunity` tables — mirror
+`stage`/`contract_status`/`domain`/`employees`/`revenue` field-for-field — so the
+overlay data shape already matches Plane's own model if Commercial Edition ever
+becomes worth revisiting. Do not migrate editions to get it.
+
 ---
 
 ## 4. The decision that gates everything
@@ -120,8 +163,10 @@ One question determines which of the options below is correct:
 | **B** | **A + overlay deal layer.** Unmanaged `crm_*` tables, overlay views/routes beside `email_feed/`, reuse `threads.py` for per-contact email history, injected UI pipeline view. | Medium; **permanent maintenance tail** | Best fit, one system, reuses the hard part already built. You are hand-building a CRM with no migrations. |
 | **C** | **EspoCRM beside Plane.** Native Opportunity (Amount/Stage/Close Date), IMAP+SMTP two-way mail, **free native HMAC webhooks with retries**. ~4 containers, ~1 GiB, port 8081 free. | Low build, second system | Real CRM data model + reporting on day one; duplicate identity and **sync drift** (the risk prior art names most often) |
 | **D** | **Twenty beside Plane.** Best product (native Opportunity, Kanban with per-stage Amount, REST+GraphQL+webhooks). | Second system | Best product, best integration API — against a 2 GB vendor floor, reported heap-OOM crashes, a healthcheck-less worker, and **breaking changes in each of the last two releases** |
+| **E** | **Migrate self-hosted CE → Commercial Edition, use native Customers + custom properties.** No overlay code for the deal schema itself. | Business plan, $13/seat/mo **+ unscoped migration risk** | §3.5. Separate, closed-source codebase — the email/store/bot_api overlays this deployment depends on are not confirmed to survive the move. Still no native amount/probability/forecast field, still no webhooks. **Not recommended.** |
 
 **Recommendation: start with A, design for B, and let the forecast question force C/D.**
+E was researched and rejected — see §3.5.
 The two forces that normally push toward a separate CRM are respectively moot (**2 active
 users**) and already built (**the `email_feed` overlay**). This deployment currently fits
 the profile where tracker-as-CRM works — the same profile where it later gets outgrown.
@@ -345,3 +390,9 @@ Stale documentation found in the process:
   real only for `migrate`.
 - The handoff's "untracked WIP in `~/plane-source`" note is stale — the tree is clean;
   `place-in-store-modal.tsx` and the attachment edits were committed in `ea277fabb`.
+
+**§3.5 addendum (2026-09-22):** the Customers/CustomerProperty research is verified
+against Plane's public developer docs, not the box —
+`developers.plane.so/api-reference/customer/{overview,add-customer,add-customer-property,
+add-customer-request,link-work-items-to-customer}`, `/dev-tools/intro-webhooks`, and
+`/self-hosting/{editions-and-versions,upgrade-from-community}`.
