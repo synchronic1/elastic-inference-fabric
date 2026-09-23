@@ -426,6 +426,25 @@ planned step, deliberately separate, is a workspace "strategy and rules" note fe
 repeated decline reasons. Details: box `RUNBOOK.md`; smoke test
 `email_feed/tests/smoke_revisions.py`.
 
+## 10c. CRM contact engagement — BUILT 2026-09-23
+
+Every contact has an automatic "last engaged": the latest of an email received from
+them, an email sent to them, and the manual `last_contacted` date. The Contacts tab
+sorts by it (most recent / longest ago; never-engaged always last) and filters to the last
+30/60/90/180 days, 1 year, or never, with a count on each chip. The agent API takes the same
+parameters (`engaged_within`, `engaged=never`, `via`, `sort=last_engaged`) and returns the
+same fields.
+
+The data is a header-only index (`email_interaction`, `email_feed/interactions.py`) of each
+connected mailbox's INBOX and Sent folders -- addresses and timestamps only, no subjects or
+bodies -- kept current by the 5-minute ingest and purged with the mailbox. It respects
+mailbox visibility (private mailboxes only count for their owner; the agent API sees shared
+mailboxes only). It was built rather than reusing `email_ingest` because that log only saw the
+newest 20 messages per poll and never Sent, so 180-day / 1-year windows would have been wrong.
+
+Limits: unmonitored mailboxes are invisible; Archive and other folders aren't read; matching
+is on the exact lower-cased email address. Details: box `RUNBOOK.md`.
+
 ## 11. Standing constraints that apply to this work
 
 - `plane-app/plane.env` holds secrets and is gitignored — **never commit or print it**.
