@@ -389,6 +389,23 @@ name** (`def url(self, name, ...): return name`). Attachments are unaffected bec
 they use the API path, but anything else calling `storage.url()` gets a relative
 fragment — worth auditing before it bites.
 
+## 10a. Multiple mailboxes per workspace — BUILT 2026-09-23
+
+The inbox is no longer tied to one IMAP account. `email_account` (unmanaged
+table, `email_feed/accounts.py`) holds any number of mailboxes per workspace,
+each with enabled / AI-on-arrival (default OFF) / messages-per-check /
+shared-or-private, Fernet-encrypted password, and a colour. The old single
+mailbox is adopted automatically; `email_ingest` dedupe is unchanged so nothing
+is re-ingested. Admins can pause/edit/remove a private mailbox but not read it;
+non-admins cannot add loopback/LAN hosts (SSRF guard). One broken mailbox is
+reported in the inbox and does not block the others. Cross-mailbox threads merge
+by Message-ID. The "only 22 threads" symptom was the UI's hardcoded
+`?limit=30`; the inbox now has "Load older mail" (30 -> 150).
+
+Not verified against a real second mailbox (no credentials to hand) — the merge
+logic was tested with mocked IMAP and the UI with a deliberately unreachable
+mailbox. Details: box `RUNBOOK.md`, "Email inbox: multiple mailboxes".
+
 ## 11. Standing constraints that apply to this work
 
 - `plane-app/plane.env` holds secrets and is gitignored — **never commit or print it**.
