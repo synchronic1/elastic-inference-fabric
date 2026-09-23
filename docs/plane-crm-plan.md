@@ -6,17 +6,38 @@ box (`ssh vinlandclaw`) and the two repos on 2026-09-22; inferences are marked
 `[inference]`. Companion to `docs/plane-handoff.md` — that doc explains the deployment,
 this one explains what to build on it.
 
-> **Built and deployed 2026-09-22.** Phases 1–4 (§5) are live on the box. Sales
+> **Built and deployed 2026-09-22/23.** Phases 1–4 (§5) are live on the box. Sales
 > project + 6 States + starter labels created; `plane.crm` overlay (accounts/
 > contacts/opportunities/link-email) mounted and smoke-tested; `extract_deal_fields()`
 > deal-extraction endpoint added to `email_feed/llm.py` and verified against a local
 > model; pipeline board UI shipped and click-tested end to end in a real browser
 > (create + stage-move). Two real bugs were caught and fixed during verification —
-> see the new §6 hazards 11–12. Backend committed on the box (`plane-selfhost` branch
-> `refactor/overlay-arch`, commits `f423c19`/`49ef65b`); frontend committed on the box
-> (`plane-source` branch `carlsson-custom`, commit `9ad482b36`). Phases 5–6 (webhooks,
-> agent surface) are not built — the forecast question in §4 still gates whether it's
-> worth it.
+> see §6 hazards 11–12.
+>
+> **Extended 2026-09-23** past the original Phase 1–4 scope, in response to live
+> feedback that the board had nowhere to browse or edit customer/contact data on
+> its own: added a full Accounts tab (inline-editable accounts, expandable
+> per-account contact + opportunity list), `CrmContact` gained phone/title/notes/
+> source fields, a CSV-paste import endpoint for historical contact data, and
+> `extract_deal_fields()` now splits `contact` into `contact_name`/`contact_email`/
+> `contact_phone`/`contact_title` so a scanned email can populate a full contact
+> record (reviewed before saving, nothing auto-committed). Also added
+> `plane.crm.common.quick_add_prospect()` — one call creates/reuses an account,
+> creates/updates a contact (matched by email, so re-calling it is idempotent),
+> and opens a linked opportunity — wired to **both** the Sales board's "New
+> prospect" form (session auth) and a new `bot_api` endpoint,
+> `POST /api/bot/v1/crm/quick-add/` (bearer token, listed in `BotRootView`'s
+> self-description so an agent discovers it unprompted). This is a slice of §5
+> Phase 6 (agent surface) pulled forward on request, not the full buildout —
+> scoped tokens and the rest of Phase 6 are still not built.
+>
+> All of this was click-tested end to end in a real browser (prospect quick-add,
+> email-extract-and-save, CSV import) and via a real bot_api bearer token, with
+> every test row removed afterward. Backend committed on the box (`plane-selfhost`
+> branch `refactor/overlay-arch`, commits `f423c19`/`49ef65b`/`9ff8f59`); frontend
+> committed on the box (`plane-source` branch `carlsson-custom`, commits
+> `9ad482b36`/`ebc3c53ed`). Phase 5 (webhooks) is not built — the forecast
+> question in §4 still gates whether the rest is worth it.
 
 ---
 
