@@ -38,6 +38,22 @@ this one explains what to build on it.
 > committed on the box (`plane-source` branch `carlsson-custom`, commits
 > `9ad482b36`/`ebc3c53ed`). Phase 5 (webhooks) is not built — the forecast
 > question in §4 still gates whether the rest is worth it.
+>
+> **Fixed 2026-09-23, same day:** every primary button (`New account`, `New
+> prospect`, etc.) was invisible — white text on a fully transparent background —
+> because the UI used `bg-accent-strong`, a class this design system does not
+> define (confirmed empirically: injecting a test element with that class
+> resolves to `rgba(0,0,0,0)`; `bg-accent-primary`, matched against Plane's own
+> "Add Project" button, is the real one). Present in the DOM, invisible on
+> screen, so it read as a missing feature rather than a CSS bug. Replaced
+> everywhere with `bg-accent-primary` + `text-on-color`. Also added a third
+> **Contacts tab** — a flat, inline-editable listing of every contact in the
+> workspace (not just nested inside an expanded account), with its own
+> "New contact" button for keying a client in by hand with no account required
+> (a typed company name resolves to an existing account or creates one, via new
+> `plane.crm.common.resolve_account_by_name()`). Verified live: manual entry
+> with no company, inline edit via the real PATCH endpoint. Backend commit
+> `4091dd8`; frontend commit `3c28ccfe8`.
 
 ---
 
@@ -379,6 +395,19 @@ Then commit **on the box** and run `~/plane-deploy.sh web`. Never `up -d`.
     (500 on `POST .../opportunities/`, caught by the Django-test-client smoke test before
     deploy). Parse request values to the right Python type yourself before assigning them to
     any unmanaged-model field.
+13. **`bg-accent-strong` is not a real class in this design system — it silently renders
+    nothing.** Tailwind compiles a class you reference to a real utility only if the token
+    exists in the theme; if it doesn't, there's no error, no warning, just no CSS rule. Paired
+    with `text-white` (which *is* real), the result is a button with correct markup, correct
+    click handler, present in the DOM and confirmed in the compiled JS bundle — but invisible:
+    white text on a transparent background. Every primary button across the CRM UI shipped
+    this way and wasn't caught until a live screenshot showed "New account" missing from an
+    otherwise-correct-looking header row. Diagnosed by injecting a throwaway element with the
+    class and reading `getComputedStyle(...).backgroundColor` — `rgba(0,0,0,0)` confirms the
+    class doesn't exist; compare against a known-working button elsewhere in the app (Plane's
+    own "Add Project" uses `bg-accent-primary text-on-color`) to find the real token. **Never
+    trust that a Tailwind class "looks right" — verify it resolves, the same way you'd verify
+    any other value that fails silently instead of erroring.**
 
 ---
 
