@@ -10,7 +10,7 @@ there is no LAN path to it from outside that network, so all access is tunneled.
 |---|---|
 | Role | OpenClaw agent host; also runs the self-hosted **Plane** app and Mixpost |
 | Hostname | `ubuntu-desktop` (Ubuntu 24.04 LTS, KVM/QEMU guest) |
-| LAN IP | `192.168.1.204` (Sweden / Vinlandsgatan network) |
+| LAN IP | `192.168.1.167` (Sweden / Vinlandsgatan network) |
 | Public IP | `90.225.100.48` |
 | Login user | `rm` (uid/gid 1000, `NOPASSWD` sudo) |
 
@@ -126,12 +126,11 @@ not run the same user in two seats.
 
 ## Caveats / known issues
 
-- **Memory is tight.** The VM has ~12 GB, no ballooning, and no hot-add
-  headroom. Any in-container Django management command on Plane (`manage.py`
-  shell/migrate) will **OOM-kill** that container. Raising RAM needs a
-  host-side `qm set --memory` + VM reboot on the Proxmox host
-  (`192.168.1.210`); that work is blocked pending a valid Proxmox credential
-  (`root@pam` password tried so far were rejected) and a stable path to the host.
+- ~~**Memory is tight** (~12 GB, OOM-kill risk on `manage.py` shell/migrate)~~ —
+  **stale, corrected 2026-09-22.** The box reports **19 GiB**, with Plane's
+  containers using ~2.2 GiB total (worker ~711 MiB, everything else <250 MiB);
+  the 5-minute email-ingest cron runs `manage.py shell` indefinitely with no
+  OOM issue. See `docs/plane-handoff.md` §3 / `docs/plane-crm-plan.md` §9.
 - **The Sweden LAN flaps.** Reachability from the box to LAN peers
   (including the Proxmox host `192.168.1.210`) swings between fully up and fully
   down within minutes, while the box's own internet/tunnel stays up. This is an
