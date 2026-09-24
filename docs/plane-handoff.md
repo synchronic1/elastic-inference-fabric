@@ -481,6 +481,22 @@ a checkbox on every contact builds a selection shared across tabs. An action bar
 own mail app (Plane still sends no mail) or runs an AI task on up to 20 contacts (personalised drafts, relationship
 summaries, custom), which returns text only. Not yet in the agent API. Details: box `RUNBOOK.md`.
 
+## 10f. Email categories from Jev — BUILT 2026-09-24
+
+Jev now works as the classifier for a nine-category scheme (client request, prospect inquiry, vendor/supplier,
+newsletter/marketing, receipt/transactional, automated notification, spam/phishing, internal/personal, other).
+Each opted-in mailbox's senders are sampled (2 recent messages each) so the whole inbox is categorised cheaply;
+a category is only shown/used when Jev is at least 90% sure, otherwise the mail is "Uncategorized". The inbox
+has a category badge, a filter row and a per-message picker; the Triage tab has a category column, filter and
+"preview all in this category" (same protection as any selection). Your labels win over Jev's and are recorded
+against its prediction, so the Jev card reports how often it agrees with you. A mailbox can opt in to skipping
+the AI work plan for four low-value categories (off by default; never for CRM contacts, people you've written
+to, committed threads, keep-tagged senders or anything you labelled). Not built: routing vendor mail to a project.
+
+Early real numbers (285 of 661 main-mailbox senders sampled): only ~99 categorize at 90% confidence, ~155 even at
+70%, because many senders are genuinely mixed (a client can send a request and an automated notice). The confidence
+threshold is not the lever; more samples per sender and human labels are. Details: box `RUNBOOK.md`.
+
 ## 11. Standing constraints that apply to this work
 
 - `plane-app/plane.env` holds secrets and is gitignored — **never commit or print it**.
