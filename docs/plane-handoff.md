@@ -471,8 +471,8 @@ default, because message text leaves the box). Only the answers are stored -- ne
 Settings card compares them with the current AI, header-derived bulk mail and committed threads, including a
 simulation of gating the large model and how many committed threads it would wrongly skip. Nothing about how mail
 is handled changes. It was validated against the REAL API on 2026-09-24 using invented emails (shapes match; ~0.5 s and ~1,100
-input tokens per message; ~$0.05 per 1,000), but it has not yet run on your real mail: no key is stored on the
-server and no mailbox is opted in. One finding: injected text in an email can bias its OTHER answers while the
+input tokens per message; ~$0.05 per 1,000), and it has been RUNNING since 2026-09-24: the key is stored (encrypted) on the
+server and the main mailbox (jenny@) is opted in; the second mailbox is not. One finding: injected text in an email can bias its OTHER answers while the
 `ai_instruction` question still flags it, so any future gate must treat that flag as an override. Jev can't generate text or read exact numbers/dates, so
 summaries, next steps and deal extraction stay with the large model.
 
