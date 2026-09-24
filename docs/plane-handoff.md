@@ -461,6 +461,23 @@ removes nothing); and 17.5k messages come from 834 senders, which is why it work
 Permanent delete, agent-API endpoints, on-arrival standing rules and content-based scoring
 are NOT built (phase 3). Details: box `RUNBOOK.md`; smoke test `email_feed/tests/smoke_triage.py`.
 
+## 10e. TypeSafe Jev shadow evaluation + CRM contact actions — BUILT 2026-09-24
+
+**Jev (shadow only).** A client for TypeSafe's typed-decision model plus per-message evaluation of new
+mail (actionable, needs-reply, marketing, phishing, AI-instruction, kind, priority, project). It is inert until
+(a) a key is stored with `~/plane-set-secret.sh TYPESAFE_API_KEY` and (b) a mailbox is opted in (Settings, off by
+default, because message text leaves the box). Only the answers are stored -- never the email text -- and the
+Settings card compares them with the current AI, header-derived bulk mail and committed threads, including a
+simulation of gating the large model and how many committed threads it would wrongly skip. Nothing about how mail
+is handled changes. It has been tested against a local stand-in for the API, NOT the real service (no key yet):
+the first real run is the moment to check the numbers. Jev can't generate text or read exact numbers/dates, so
+summaries, next steps and deal extraction stay with the large model.
+
+**CRM contact actions.** Contacts under an account or vendor link through to their detail in the Contacts tab;
+a checkbox on every contact builds a selection shared across tabs. An action bar composes an email in the user's
+own mail app (Plane still sends no mail) or runs an AI task on up to 20 contacts (personalised drafts, relationship
+summaries, custom), which returns text only. Not yet in the agent API. Details: box `RUNBOOK.md`.
+
 ## 11. Standing constraints that apply to this work
 
 - `plane-app/plane.env` holds secrets and is gitignored — **never commit or print it**.
