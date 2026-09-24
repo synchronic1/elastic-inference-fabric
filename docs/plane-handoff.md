@@ -284,7 +284,8 @@ covers. Anything that must appear in Plane has to be brought in deliberately via
 
 ```bash
 # reconcile the two sides yourself
-find /home/rm/Dropbox/PlaneArtifacts -type f -printf '%TY-%Tm-%Td %TH:%TM %P\n' | sort
+find /home/rm/Dropbox/PlaneArtifacts -type f -printf '%TY-%Tm-%Td %TH:%TM %P
+' | sort
 docker exec -i plane-app-api-1 python3 manage.py shell -c \
   "from plane.db.models import FileAsset
 for a in FileAsset.objects.order_by('created_at'):
@@ -469,8 +470,10 @@ mail (actionable, needs-reply, marketing, phishing, AI-instruction, kind, priori
 default, because message text leaves the box). Only the answers are stored -- never the email text -- and the
 Settings card compares them with the current AI, header-derived bulk mail and committed threads, including a
 simulation of gating the large model and how many committed threads it would wrongly skip. Nothing about how mail
-is handled changes. It has been tested against a local stand-in for the API, NOT the real service (no key yet):
-the first real run is the moment to check the numbers. Jev can't generate text or read exact numbers/dates, so
+is handled changes. It was validated against the REAL API on 2026-09-24 using invented emails (shapes match; ~0.5 s and ~1,100
+input tokens per message; ~$0.05 per 1,000), but it has not yet run on your real mail: no key is stored on the
+server and no mailbox is opted in. One finding: injected text in an email can bias its OTHER answers while the
+`ai_instruction` question still flags it, so any future gate must treat that flag as an override. Jev can't generate text or read exact numbers/dates, so
 summaries, next steps and deal extraction stay with the large model.
 
 **CRM contact actions.** Contacts under an account or vendor link through to their detail in the Contacts tab;
