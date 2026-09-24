@@ -445,6 +445,22 @@ newest 20 messages per poll and never Sent, so 180-day / 1-year windows would ha
 Limits: unmonitored mailboxes are invisible; Archive and other folders aren't read; matching
 is on the exact lower-cased email address. Details: box `RUNBOOK.md`.
 
+## 10d. Inbox triage — BUILT 2026-09-23 (phases 1-2)
+
+A "Triage" tab judges a mailbox by sender: an explainable 0-100 score (CRM contact, written
+to, committed thread, bulk/list headers, no-reply, unanswered volume, your keep/junk tags),
+keep/junk rules on a sender, domain or list, and previews that change nothing. Approved mail
+can be moved to a "Plane Quarantine" folder -- only where the mailbox has "let Plane move
+mail" switched on (off by default), only by its owner or an admin, and always undoable.
+Protected senders (CRM contacts, people we've written to, committed threads, keep-tagged) are
+never moved by a rule. Scores also appear as chips on inbox threads and messages.
+
+Two facts that shaped it: the mail server has neither IMAP MOVE nor UIDPLUS, so a move is
+copy -> verify -> flag -> expunge (verified against scratch folders; a failed verification
+removes nothing); and 17.5k messages come from 834 senders, which is why it works per sender.
+Permanent delete, agent-API endpoints, on-arrival standing rules and content-based scoring
+are NOT built (phase 3). Details: box `RUNBOOK.md`; smoke test `email_feed/tests/smoke_triage.py`.
+
 ## 11. Standing constraints that apply to this work
 
 - `plane-app/plane.env` holds secrets and is gitignored — **never commit or print it**.
